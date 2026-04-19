@@ -1,65 +1,104 @@
-import Image from "next/image";
+import { redirect } from 'next/navigation';
+import { getCurrentUser } from '@/lib/auth/session';
+import { Sidebar } from '@/components/blocks/Sidebar';
+import { DemoBanner } from '@/components/blocks/DemoBanner';
+import { PageHeader } from '@/components/blocks/PageHeader';
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
+import { isStrategosAdmin } from '@/lib/auth/rbac';
+import Link from 'next/link';
+import { Building2, ArrowRight } from 'lucide-react';
+import { EmptyState } from '@/components/blocks/EmptyState';
 
-export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+export default async function HomePage() {
+    const user = await getCurrentUser();
+    if (!user) redirect('/login');
+
+    const strategosAdmin = isStrategosAdmin(user);
+
+    const clientMemberships = user.memberships.filter(
+        (m) => m.organization.type === 'client',
+    );
+
+    if (!strategosAdmin && clientMemberships.length === 1) {
+        redirect(`/c/${clientMemberships[0].organization.slug}`);
+    }
+
+    return (
+        <div className="flex h-screen flex-col">
+            <DemoBanner />
+            <div className="flex flex-1 overflow-hidden">
+                <Sidebar user={user} />
+                <main className="flex-1 overflow-y-auto p-8">
+                    <div className="max-w-5xl mx-auto">
+                        <PageHeader
+                            title={`Welcome back, ${user.display_name ?? user.email.split('@')[0]}`}
+                            description={
+                                strategosAdmin
+                                    ? 'Strategos AI control plane. Pick a client to manage, or jump into the agency views.'
+                                    : 'Pick a workspace to continue.'
+                            }
+                        />
+
+                        {clientMemberships.length === 0 && !strategosAdmin && (
+                            <EmptyState
+                                icon={Building2}
+                                title="No workspaces yet"
+                                description="You haven't been invited to any client workspace. Reach out to your Strategos contact."
+                            />
+                        )}
+
+                        {clientMemberships.length > 0 && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {clientMemberships.map((m) => (
+                                    <Link
+                                        key={m.id}
+                                        href={`/c/${m.organization.slug}`}
+                                        className="group"
+                                    >
+                                        <Card className="h-full transition-all group-hover:shadow-md group-hover:border-slate-300">
+                                            <CardHeader>
+                                                <div className="flex items-center gap-3">
+                                                    {m.organization.theme.logo_url ? (
+                                                        // eslint-disable-next-line @next/next/no-img-element
+                                                        <img
+                                                            src={m.organization.theme.logo_url}
+                                                            alt=""
+                                                            className="h-10 w-10 rounded-md object-cover"
+                                                        />
+                                                    ) : (
+                                                        <div
+                                                            className="flex h-10 w-10 items-center justify-center rounded-md font-bold text-white"
+                                                            style={{
+                                                                background:
+                                                                    m.organization.theme.primary_color ??
+                                                                    '#0d0d2b',
+                                                            }}
+                                                        >
+                                                            {m.organization.name[0]}
+                                                        </div>
+                                                    )}
+                                                    <div>
+                                                        <CardTitle>{m.organization.name}</CardTitle>
+                                                        <CardDescription className="text-xs capitalize">
+                                                            {m.role.replace(/_/g, ' ')}
+                                                        </CardDescription>
+                                                    </div>
+                                                </div>
+                                            </CardHeader>
+                                            <CardContent>
+                                                <div className="flex items-center gap-1 text-sm text-slate-500 group-hover:text-slate-900">
+                                                    Open workspace
+                                                    <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+                                    </Link>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </main>
+            </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+    );
 }
