@@ -66,6 +66,17 @@ const TARGETS: Target[] = [
         role: 'strategos_admin',
         display_name: 'Roi',
     },
+    // Preview account — logs into Just Print as a client_owner ONLY (no
+    // admin membership), so the session is identical to what Justin will
+    // see. Use this to QA the client-scoped UI without demoting the
+    // real admin account. Receives a magic-link email when you request
+    // one from /login — no email is sent at provisioning time.
+    {
+        email: 'jpenad.ieu2023@student.ie.edu',
+        org_slug: 'just-print',
+        role: 'client_owner',
+        display_name: 'JS (Just Print preview)',
+    },
 ];
 
 async function findOrCreateUser(email: string, displayName?: string) {
