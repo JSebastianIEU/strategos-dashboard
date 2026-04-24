@@ -28,6 +28,48 @@ export interface CraigQuote {
     created_at: string | null;
     /** Populated on conversation detail responses — relative path under the agent API base. */
     pdf_url?: string;
+    // PrintLogic integration state
+    /** Real PrintLogic id, OR a synthetic 'DRY-XXXX' when the tenant is in dry-run. Null = never pushed. */
+    printlogic_order_id?: string | null;
+    printlogic_customer_id?: string | null;
+    printlogic_pushed_at?: string | null;
+    printlogic_last_error?: string | null;
+    printlogic_push_attempts?: number;
+    // Stripe payment link state (Phase B). Null when no link has been created
+    // OR when stripe_enabled=false for this tenant.
+    stripe_payment_link_id?: string | null;
+    stripe_payment_link_url?: string | null;
+    /** 'unpaid' | 'paid' | 'refunded' | 'failed' | null */
+    stripe_payment_status?: string | null;
+    stripe_paid_at?: string | null;
+    stripe_last_error?: string | null;
+}
+
+/** Server response shape from POST /quotes/:id/create-payment-link */
+export interface CreatePaymentLinkResult {
+    quote: CraigQuote;
+    result: {
+        ok: boolean;
+        url: string | null;
+        link_id: string | null;
+        already_exists: boolean;
+        disabled: boolean;
+        error: string | null;
+    };
+}
+
+/** Server response shape from POST /quotes/:id/push-to-printlogic */
+export interface PushToPrintLogicResult {
+    quote: CraigQuote;
+    result: {
+        ok: boolean;
+        dry_run: boolean;
+        order_id: string | null;
+        customer_id: string | null;
+        ambiguous: boolean;
+        error: string | null;
+        already_pushed: boolean;
+    };
 }
 
 export interface CraigConversation {
