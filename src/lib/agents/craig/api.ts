@@ -181,6 +181,17 @@ export interface CraigWidgetConfig {
     accent_blue: string;
 }
 
+/** Stripe Connect linkage state per tenant. Returned by
+ * GET /admin/api/orgs/:slug/integrations/stripe/connect-status. */
+export interface StripeConnectStatus {
+    connected: boolean;
+    account_id: string | null;
+    user_email: string | null;
+    connected_at: string | null;
+    publishable_key: string | null;
+    enabled: boolean;
+}
+
 /** Per-integration health summary returned by GET /integrations/status */
 export interface IntegrationHealth {
     configured: boolean;

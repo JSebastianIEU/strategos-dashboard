@@ -4,7 +4,9 @@
  * a ready-to-use apiFetch function that proxies through /api/agent-proxy
  * (which signs + forwards requests to the agent's backend).
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
+import { toast } from 'sonner';
 import { getAgentDefinition } from '@/lib/agents/registry';
 import { notFound } from 'next/navigation';
 
@@ -21,6 +23,30 @@ interface Props {
 export function AgentModuleRunner(props: Props) {
     const def = getAgentDefinition(props.agentSlug);
     const module_ = def?.modules.find((m) => m.route === props.section);
+
+    // Stripe Connect callback toast — the backend redirects users back
+    // to /c/{slug}/a/craig/settings?stripe=connected (or ?stripe=error&msg=...).
+    // We show a toast and strip the query params so a refresh doesn't
+    // re-fire it. Must be before any conditional return to keep hook
+    // order stable across renders.
+    const searchParams = useSearchParams();
+    const router = useRouter();
+    const pathname = usePathname();
+
+    useEffect(() => {
+        const stripeParam = searchParams.get('stripe');
+        if (!stripeParam) return;
+        if (stripeParam === 'connected') {
+            toast.success('Connected to Stripe');
+        } else if (stripeParam === 'error') {
+            toast.error(
+                `Stripe connection failed: ${searchParams.get('msg') ?? 'unknown error'}`,
+            );
+        }
+        // Strip the query params so a refresh doesn't re-fire
+        router.replace(pathname);
+    }, [searchParams, router, pathname]);
+
     if (!def || !module_) return notFound();
 
     const Component = module_.Component;
