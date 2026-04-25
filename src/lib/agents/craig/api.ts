@@ -181,6 +181,29 @@ export interface CraigWidgetConfig {
     accent_blue: string;
 }
 
+/** Per-integration health summary returned by GET /integrations/status */
+export interface IntegrationHealth {
+    configured: boolean;
+    enabled: boolean;
+    health: 'green' | 'yellow' | 'red' | 'unknown';
+    last_success_at: string | null;
+    last_error: string | null;
+    last_error_at: string | null;
+    stats_30d: Record<string, number>;
+    notes: string | null;
+    /** PrintLogic-only — true if dry_run mode is on */
+    dry_run?: boolean;
+    /** Missive-only — currently configured from_address */
+    from_address?: string;
+}
+
+export interface IntegrationsHealth {
+    missive: IntegrationHealth;
+    printlogic: IntegrationHealth;
+    stripe: IntegrationHealth;
+    computed_at: string;
+}
+
 export interface CraigMetrics {
     from: string;
     to: string;

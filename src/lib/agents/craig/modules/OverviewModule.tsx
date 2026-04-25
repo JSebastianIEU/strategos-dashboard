@@ -12,6 +12,7 @@ import { DateRangePicker, type DateRangeValue } from '@/components/blocks/DateRa
 import { ErrorState } from '@/components/blocks/ErrorState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { FileText, MessageSquare, TrendingUp, CheckCircle2 } from 'lucide-react';
+import { IntegrationsHealthCard } from './overview/IntegrationsHealthCard';
 
 const eur = (v: number) => '€' + v.toLocaleString('en-IE', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const pct = (v: number) => Math.round(v * 100) + '%';
@@ -59,6 +60,8 @@ export function OverviewModule({ organizationSlug, apiFetch }: AgentModuleProps)
             />
 
             {error && <ErrorState description={error} />}
+
+            <IntegrationsHealthCard organizationSlug={organizationSlug} apiFetch={apiFetch} />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard

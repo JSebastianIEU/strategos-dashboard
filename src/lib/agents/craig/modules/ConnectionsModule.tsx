@@ -6,6 +6,8 @@ import { PageHeader } from '@/components/blocks/PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { WidgetTab } from './connections/WidgetTab';
 import { MissiveTab } from './connections/MissiveTab';
+import { PrintLogicTab } from './connections/PrintLogicTab';
+import { StripeTab } from './connections/StripeTab';
 import { ComingSoonTab } from './connections/ComingSoonTab';
 
 /**
@@ -28,6 +30,8 @@ export function ConnectionsModule(props: AgentModuleProps) {
                     <TabsTrigger value="widget">Widget</TabsTrigger>
                     <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger>
                     <TabsTrigger value="missive">Missive</TabsTrigger>
+                    <TabsTrigger value="printlogic">PrintLogic</TabsTrigger>
+                    <TabsTrigger value="stripe">Stripe</TabsTrigger>
                     <TabsTrigger value="email">Email</TabsTrigger>
                 </TabsList>
 
@@ -49,6 +53,14 @@ export function ConnectionsModule(props: AgentModuleProps) {
 
                 <TabsContent value="missive">
                     <MissiveTab {...props} />
+                </TabsContent>
+
+                <TabsContent value="printlogic">
+                    <PrintLogicTab {...props} />
+                </TabsContent>
+
+                <TabsContent value="stripe">
+                    <StripeTab {...props} />
                 </TabsContent>
 
                 <TabsContent value="email">
