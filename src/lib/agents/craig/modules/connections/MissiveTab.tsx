@@ -176,6 +176,20 @@ export function MissiveTab({ organizationSlug, agentApiBaseUrl, apiFetch }: Agen
     const hasFromAddress = !!drafts.missive_from_address.trim();
     const hasSecret = !!drafts.missive_webhook_secret.trim();
     const readyToEnable = hasToken && hasFromAddress && hasSecret;
+    // Backend masks secrets as "********" in GET. At focus we clear so
+    // the user types fresh; saving without typing is a backend no-op.
+    const SECRET_MASK = '********';
+    const isMasked = (v: string) => v === SECRET_MASK;
+    const clearIfMaskedToken = () => {
+        if (isMasked(drafts.missive_api_token)) {
+            setDrafts((d) => ({ ...d, missive_api_token: '' }));
+        }
+    };
+    const clearIfMaskedSecret = () => {
+        if (isMasked(drafts.missive_webhook_secret)) {
+            setDrafts((d) => ({ ...d, missive_webhook_secret: '' }));
+        }
+    };
 
     // Short summary for the status card. Keeps the dirty-state logic predictable.
     const savedEnabled = useMemo(
@@ -260,7 +274,12 @@ export function MissiveTab({ organizationSlug, agentApiBaseUrl, apiFetch }: Agen
                                 onChange={(e) =>
                                     setDrafts((d) => ({ ...d, missive_api_token: e.target.value }))
                                 }
-                                placeholder="missive_pat-..."
+                                onFocus={clearIfMaskedToken}
+                                placeholder={
+                                    isMasked(drafts.missive_api_token)
+                                        ? 'Configured — type to replace'
+                                        : 'missive_pat-...'
+                                }
                                 className="font-mono text-xs"
                                 autoComplete="off"
                                 spellCheck={false}

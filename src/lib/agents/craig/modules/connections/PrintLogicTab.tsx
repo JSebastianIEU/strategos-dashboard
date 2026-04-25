@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Printer, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Printer, Eye, EyeOff, Loader2, PlugZap } from 'lucide-react';
 import { toast } from 'sonner';
 import type { AgentModuleProps } from '@/types/agent';
 import type { CraigSetting } from '../../api';
@@ -61,6 +61,23 @@ export function PrintLogicTab({ organizationSlug, apiFetch }: AgentModuleProps) 
     const [error, setError] = useState<string | null>(null);
     const [revealKey, setRevealKey] = useState(false);
     const [health, setHealth] = useState<IntegrationHealth | null>(null);
+    const [testing, setTesting] = useState(false);
+
+    async function testConnection() {
+        setTesting(true);
+        try {
+            const res = await apiFetch<{ ok: boolean; message: string }>(
+                `/admin/api/orgs/${organizationSlug}/integrations/printlogic/test`,
+                { method: 'POST' },
+            );
+            if (res.ok) toast.success(res.message);
+            else toast.error(res.message);
+        } catch (e) {
+            toast.error('Test failed: ' + e);
+        } finally {
+            setTesting(false);
+        }
+    }
 
     // Load settings once
     useEffect(() => {
@@ -165,6 +182,13 @@ export function PrintLogicTab({ organizationSlug, apiFetch }: AgentModuleProps) 
 
     const dryRun = drafts.printlogic_dry_run !== 'false';
     const hasKey = !!drafts.printlogic_api_key.trim();
+    const SECRET_MASK = '********';
+    const isMasked = (v: string) => v === SECRET_MASK;
+    const clearIfMaskedKey = () => {
+        if (isMasked(drafts.printlogic_api_key)) {
+            setDrafts((d) => ({ ...d, printlogic_api_key: '' }));
+        }
+    };
 
     const pillVariant = (h: IntegrationHealth | null) => {
         if (!h || h.health === 'unknown') return 'secondary';
@@ -192,9 +216,25 @@ export function PrintLogicTab({ organizationSlug, apiFetch }: AgentModuleProps) 
                                 </CardDescription>
                             </div>
                         </div>
-                        <Badge variant={pillVariant(health)}>
-                            {health?.health ?? 'unknown'}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                            <Badge variant={pillVariant(health)}>
+                                {health?.health ?? 'unknown'}
+                            </Badge>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={testConnection}
+                                disabled={testing || !hasKey}
+                                title="Read-only validation of the api_key + firm binding"
+                            >
+                                {testing ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                    <PlugZap className="h-3 w-3" />
+                                )}{' '}
+                                Test
+                            </Button>
+                        </div>
                     </div>
                 </CardHeader>
                 <CardContent>
@@ -248,7 +288,12 @@ export function PrintLogicTab({ organizationSlug, apiFetch }: AgentModuleProps) 
                                         printlogic_api_key: e.target.value,
                                     }))
                                 }
-                                placeholder="paste the API key here"
+                                onFocus={clearIfMaskedKey}
+                                placeholder={
+                                    isMasked(drafts.printlogic_api_key)
+                                        ? 'Configured — type to replace'
+                                        : 'paste the API key here'
+                                }
                             />
                             <Button
                                 type="button"

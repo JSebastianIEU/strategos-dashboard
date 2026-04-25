@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { CreditCard, Eye, EyeOff, Copy, Check, Loader2 } from 'lucide-react';
+import { CreditCard, Eye, EyeOff, Copy, Check, Loader2, PlugZap } from 'lucide-react';
 import { toast } from 'sonner';
 import type { AgentModuleProps } from '@/types/agent';
 import type { CraigSetting } from '../../api';
@@ -68,6 +68,7 @@ export function StripeTab({ organizationSlug, agentApiBaseUrl, apiFetch }: Agent
     const [revealWhsec, setRevealWhsec] = useState(false);
     const [copied, setCopied] = useState<'url' | null>(null);
     const [health, setHealth] = useState<IntegrationHealth | null>(null);
+    const [testing, setTesting] = useState(false);
 
     // Load settings
     useEffect(() => {
@@ -157,6 +158,25 @@ export function StripeTab({ organizationSlug, agentApiBaseUrl, apiFetch }: Agent
         }
     }
 
+    async function testConnection() {
+        setTesting(true);
+        try {
+            const res = await apiFetch<{ ok: boolean; message: string; account_id?: string }>(
+                `/admin/api/orgs/${organizationSlug}/integrations/stripe/test`,
+                { method: 'POST' },
+            );
+            if (res.ok) {
+                toast.success(res.message);
+            } else {
+                toast.error(res.message);
+            }
+        } catch (e) {
+            toast.error('Test failed: ' + e);
+        } finally {
+            setTesting(false);
+        }
+    }
+
     async function copyUrl(value: string) {
         try {
             await navigator.clipboard.writeText(value);
@@ -179,6 +199,17 @@ export function StripeTab({ organizationSlug, agentApiBaseUrl, apiFetch }: Agent
     }
 
     const enabled = drafts.stripe_enabled === 'true';
+    // The backend masks secret values as "********" in GET responses. We
+    // treat the mask as "configured but hidden" — at focus the field
+    // clears so the user types a fresh value. Saving without typing is a
+    // backend no-op (refuses to overwrite real secret with the mask).
+    const SECRET_MASK = '********';
+    const isMasked = (v: string) => v === SECRET_MASK;
+    const clearIfMasked = (key: 'stripe_secret_key' | 'stripe_webhook_secret') => () => {
+        if (isMasked(drafts[key])) {
+            setDrafts((d) => ({ ...d, [key]: '' }));
+        }
+    };
     const hasSecret = !!drafts.stripe_secret_key.trim();
     const hasWhsec = !!drafts.stripe_webhook_secret.trim();
     const webhookUrl = `${agentApiBaseUrl}/admin/api/webhooks/stripe/${organizationSlug}`;
@@ -208,9 +239,25 @@ export function StripeTab({ organizationSlug, agentApiBaseUrl, apiFetch }: Agent
                                 </CardDescription>
                             </div>
                         </div>
-                        <Badge variant={pillVariant(health)}>
-                            {health?.health ?? 'unknown'}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                            <Badge variant={pillVariant(health)}>
+                                {health?.health ?? 'unknown'}
+                            </Badge>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={testConnection}
+                                disabled={testing || !hasSecret}
+                                title="Validate the saved key against Stripe"
+                            >
+                                {testing ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                    <PlugZap className="h-3 w-3" />
+                                )}{' '}
+                                Test
+                            </Button>
+                        </div>
                     </div>
                 </CardHeader>
                 <CardContent>
@@ -295,7 +342,12 @@ export function StripeTab({ organizationSlug, agentApiBaseUrl, apiFetch }: Agent
                                         stripe_secret_key: e.target.value,
                                     }))
                                 }
-                                placeholder="sk_live_... or sk_test_..."
+                                onFocus={clearIfMasked('stripe_secret_key')}
+                                placeholder={
+                                    isMasked(drafts.stripe_secret_key)
+                                        ? 'Configured — type to replace'
+                                        : 'sk_live_... or sk_test_...'
+                                }
                             />
                             <Button
                                 type="button"
@@ -336,7 +388,12 @@ export function StripeTab({ organizationSlug, agentApiBaseUrl, apiFetch }: Agent
                                         stripe_webhook_secret: e.target.value,
                                     }))
                                 }
-                                placeholder="whsec_..."
+                                onFocus={clearIfMasked('stripe_webhook_secret')}
+                                placeholder={
+                                    isMasked(drafts.stripe_webhook_secret)
+                                        ? 'Configured — type to replace'
+                                        : 'whsec_...'
+                                }
                             />
                             <Button
                                 type="button"
