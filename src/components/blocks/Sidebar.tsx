@@ -8,12 +8,14 @@ import {
     Users,
     LogOut,
     ChevronDown,
+    UserCog,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { AppUser } from '@/types/user';
 import type { AgentConnectionWithAgent } from '@/types/agent';
 import { getAgentDefinition } from '@/lib/agents/registry';
 import { isStrategosAdmin } from '@/lib/auth/rbac';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 interface SidebarProps {
     user: AppUser;
@@ -155,11 +157,12 @@ export function Sidebar({
 }
 
 /**
- * POST to /auth/signout (Link prefetches can't trigger POST, unlike GET).
- * Redirects to /login on success.
+ * Footer of the sidebar — user identity + a dropdown with account
+ * settings + sign out. Same pattern as Linear / Notion / Vercel: click
+ * the user pill to expand, action items appear above.
  */
 function SignOutButton({ user }: { user: AppUser }) {
-    async function handleClick() {
+    async function handleSignOut() {
         try {
             await fetch('/auth/signout', { method: 'POST' });
         } finally {
@@ -169,24 +172,49 @@ function SignOutButton({ user }: { user: AppUser }) {
     }
 
     return (
-        <button
-            type="button"
-            onClick={handleClick}
-            className="w-full flex items-center gap-2 rounded-md px-2 py-2 text-xs text-slate-600 hover:bg-slate-100 text-left"
-        >
-            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[10px] font-medium text-slate-700">
-                {user.email[0]?.toUpperCase()}
-            </div>
-            <div className="flex-1 min-w-0">
-                <div className="truncate text-xs font-medium text-slate-900">
-                    {user.display_name ?? user.email.split('@')[0]}
-                </div>
-                <div className="truncate text-[10px] text-slate-500">
-                    {user.email}
-                </div>
-            </div>
-            <LogOut className="h-3 w-3 text-slate-400" />
-        </button>
+        <Popover>
+            <PopoverTrigger asChild>
+                <button
+                    type="button"
+                    className="w-full flex items-center gap-2 rounded-md px-2 py-2 text-xs text-slate-600 hover:bg-slate-100 text-left"
+                >
+                    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[10px] font-medium text-slate-700">
+                        {user.email[0]?.toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="truncate text-xs font-medium text-slate-900">
+                            {user.display_name ?? user.email.split('@')[0]}
+                        </div>
+                        <div className="truncate text-[10px] text-slate-500">
+                            {user.email}
+                        </div>
+                    </div>
+                    <ChevronDown className="h-3 w-3 text-slate-400" />
+                </button>
+            </PopoverTrigger>
+            <PopoverContent
+                side="top"
+                align="start"
+                className="w-60 p-1"
+                sideOffset={8}
+            >
+                <Link
+                    href="/account"
+                    className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+                >
+                    <UserCog className="h-4 w-4 text-slate-500" />
+                    Account settings
+                </Link>
+                <button
+                    type="button"
+                    onClick={handleSignOut}
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+                >
+                    <LogOut className="h-4 w-4 text-slate-500" />
+                    Sign out
+                </button>
+            </PopoverContent>
+        </Popover>
     );
 }
 
