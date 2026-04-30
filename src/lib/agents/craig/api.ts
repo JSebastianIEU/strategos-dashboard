@@ -80,6 +80,14 @@ export interface PushToPrintLogicResult {
     };
 }
 
+export interface CraigDeliveryAddress {
+    address1?: string;
+    address2?: string;
+    address3?: string;
+    address4?: string;
+    postcode?: string;
+}
+
 export interface CraigConversation {
     id: number;
     external_id: string | null;
@@ -92,6 +100,15 @@ export interface CraigConversation {
     last_message_preview: string | null;
     last_message_at: string | null;
     created_at: string | null;
+    // Phase E — extended customer-funnel fields. All nullable; populated
+    // by save_customer_info as Craig walks the customer through the
+    // 5-step funnel (or by Justin via the dashboard PATCH endpoint).
+    is_company?: boolean | null;
+    is_returning_customer?: boolean | null;
+    past_customer_email?: string | null;
+    /** 'delivery' | 'collect' | null */
+    delivery_method?: string | null;
+    delivery_address?: CraigDeliveryAddress | null;
 }
 
 export interface CraigConversationDetail extends CraigConversation {

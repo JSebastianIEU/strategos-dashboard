@@ -2,9 +2,9 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import type { ColumnDef } from '@tanstack/react-table';
-import { FileText, Download, Trash2 } from 'lucide-react';
+import { FileText, Download, Trash2, Pencil, Check, X, Building2, RotateCw, Truck, Store } from 'lucide-react';
 import type { AgentModuleProps } from '@/types/agent';
-import type { CraigConversation, CraigConversationDetail } from '../api';
+import type { CraigConversation, CraigConversationDetail, CraigDeliveryAddress } from '../api';
 import { DataTable } from '@/components/blocks/DataTable';
 import { PageHeader } from '@/components/blocks/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -12,8 +12,51 @@ import { ErrorState } from '@/components/blocks/ErrorState';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 
 const CHANNELS = ['all', 'web', 'whatsapp', 'email', 'missive', 'phone'] as const;
+
+type EditDraft = {
+    customer_name: string;
+    customer_email: string;
+    customer_phone: string;
+    is_company: '' | 'true' | 'false';
+    is_returning_customer: '' | 'true' | 'false';
+    past_customer_email: string;
+    delivery_method: '' | 'delivery' | 'collect';
+    address1: string;
+    address2: string;
+    address3: string;
+    address4: string;
+    postcode: string;
+};
+
+function _draftFromConv(c: CraigConversationDetail): EditDraft {
+    const a = c.delivery_address || {};
+    return {
+        customer_name: c.customer_name ?? '',
+        customer_email: c.customer_email ?? '',
+        customer_phone: c.customer_phone ?? '',
+        is_company:
+            c.is_company === true ? 'true' : c.is_company === false ? 'false' : '',
+        is_returning_customer:
+            c.is_returning_customer === true
+                ? 'true'
+                : c.is_returning_customer === false
+                ? 'false'
+                : '',
+        past_customer_email: c.past_customer_email ?? '',
+        delivery_method:
+            c.delivery_method === 'delivery' || c.delivery_method === 'collect'
+                ? c.delivery_method
+                : '',
+        address1: a.address1 ?? '',
+        address2: a.address2 ?? '',
+        address3: a.address3 ?? '',
+        address4: a.address4 ?? '',
+        postcode: a.postcode ?? '',
+    };
+}
 
 export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetch }: AgentModuleProps) {
     const [list, setList] = useState<CraigConversation[] | null>(null);
@@ -21,6 +64,69 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
     const [error, setError] = useState<string | null>(null);
     const [channel, setChannel] = useState<(typeof CHANNELS)[number]>('all');
     const [search, setSearch] = useState('');
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState<EditDraft | null>(null);
+    const [savingEdit, setSavingEdit] = useState(false);
+
+    function startEdit() {
+        if (selected) {
+            setDraft(_draftFromConv(selected));
+            setEditing(true);
+        }
+    }
+
+    function cancelEdit() {
+        setEditing(false);
+        setDraft(null);
+    }
+
+    async function saveEdit() {
+        if (!selected || !draft) return;
+        setSavingEdit(true);
+        try {
+            const body: Record<string, unknown> = {
+                customer_name: draft.customer_name || '',
+                customer_email: draft.customer_email || '',
+                customer_phone: draft.customer_phone || '',
+                past_customer_email: draft.past_customer_email || '',
+            };
+            if (draft.is_company !== '') body.is_company = draft.is_company === 'true';
+            if (draft.is_returning_customer !== '')
+                body.is_returning_customer = draft.is_returning_customer === 'true';
+            if (draft.delivery_method !== '') body.delivery_method = draft.delivery_method;
+            if (draft.delivery_method === 'delivery') {
+                body.delivery_address = {
+                    address1: draft.address1,
+                    address2: draft.address2,
+                    address3: draft.address3,
+                    address4: draft.address4,
+                    postcode: draft.postcode,
+                };
+            }
+            const { conversation } = await apiFetch<{ conversation: CraigConversation }>(
+                `/admin/api/orgs/${organizationSlug}/conversations/${selected.id}`,
+                {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                },
+            );
+            setSelected({
+                ...selected,
+                ...conversation,
+            });
+            setList((prev) =>
+                prev?.map((c) => (c.id === conversation.id ? { ...c, ...conversation } : c)) ?? null,
+            );
+            setEditing(false);
+            setDraft(null);
+            toast.success('Customer info updated');
+        } catch (e) {
+            toast.error('Failed to update: ' + e);
+        } finally {
+            setSavingEdit(false);
+        }
+    }
 
     useEffect(() => {
         let cancelled = false;
@@ -161,6 +267,18 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
                             )}
                         </div>
                         <div className="flex items-center gap-1">
+                            {!editing && (
+                                <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="text-slate-500 hover:text-slate-900"
+                                    onClick={startEdit}
+                                    aria-label="Edit customer info"
+                                    title="Edit customer info"
+                                >
+                                    <Pencil className="h-4 w-4" />
+                                </Button>
+                            )}
                             <Button
                                 size="icon"
                                 variant="ghost"
@@ -179,6 +297,221 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
                             </button>
                         </div>
                     </div>
+
+                    {/* Customer profile (read-only mode) */}
+                    {!editing && (
+                        <div className="mb-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs space-y-1.5">
+                            <div className="flex flex-wrap gap-1.5">
+                                {selected.is_company === true && (
+                                    <Badge variant="secondary" className="gap-1">
+                                        <Building2 className="h-3 w-3" /> Company
+                                    </Badge>
+                                )}
+                                {selected.is_company === false && (
+                                    <Badge variant="secondary">Individual</Badge>
+                                )}
+                                {selected.is_returning_customer && (
+                                    <Badge variant="secondary" className="gap-1">
+                                        <RotateCw className="h-3 w-3" /> Returning
+                                    </Badge>
+                                )}
+                                {selected.delivery_method === 'delivery' && (
+                                    <Badge variant="secondary" className="gap-1">
+                                        <Truck className="h-3 w-3" /> Delivery
+                                    </Badge>
+                                )}
+                                {selected.delivery_method === 'collect' && (
+                                    <Badge variant="secondary" className="gap-1">
+                                        <Store className="h-3 w-3" /> Collect
+                                    </Badge>
+                                )}
+                            </div>
+                            {selected.customer_phone && (
+                                <div className="text-slate-600">📞 {selected.customer_phone}</div>
+                            )}
+                            {selected.is_returning_customer && selected.past_customer_email && (
+                                <div className="text-slate-600">
+                                    Past account: {selected.past_customer_email}
+                                </div>
+                            )}
+                            {selected.delivery_method === 'delivery' && selected.delivery_address && (
+                                <div className="text-slate-600">
+                                    📦{' '}
+                                    {[
+                                        selected.delivery_address.address1,
+                                        selected.delivery_address.address2,
+                                        selected.delivery_address.address3,
+                                        selected.delivery_address.address4,
+                                        selected.delivery_address.postcode,
+                                    ]
+                                        .filter(Boolean)
+                                        .join(', ') || '(address pending)'}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Customer profile (edit mode) */}
+                    {editing && draft && (
+                        <div className="mb-4 rounded-md border border-slate-200 bg-white p-3 text-xs space-y-2.5">
+                            <div className="flex items-center justify-between">
+                                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                    Edit customer info
+                                </div>
+                                <div className="flex gap-1">
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={cancelEdit}
+                                        disabled={savingEdit}
+                                        className="h-7 px-2"
+                                    >
+                                        <X className="h-3 w-3 mr-1" /> Cancel
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        onClick={saveEdit}
+                                        disabled={savingEdit}
+                                        className="h-7 px-2"
+                                    >
+                                        <Check className="h-3 w-3 mr-1" /> Save
+                                    </Button>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <Label className="text-[10px]">Name</Label>
+                                    <Input
+                                        className="h-7 text-xs"
+                                        value={draft.customer_name}
+                                        onChange={(e) =>
+                                            setDraft({ ...draft, customer_name: e.target.value })
+                                        }
+                                    />
+                                </div>
+                                <div>
+                                    <Label className="text-[10px]">Email</Label>
+                                    <Input
+                                        className="h-7 text-xs"
+                                        value={draft.customer_email}
+                                        onChange={(e) =>
+                                            setDraft({ ...draft, customer_email: e.target.value })
+                                        }
+                                    />
+                                </div>
+                                <div>
+                                    <Label className="text-[10px]">Phone</Label>
+                                    <Input
+                                        className="h-7 text-xs"
+                                        value={draft.customer_phone}
+                                        onChange={(e) =>
+                                            setDraft({ ...draft, customer_phone: e.target.value })
+                                        }
+                                    />
+                                </div>
+                                <div>
+                                    <Label className="text-[10px]">Customer type</Label>
+                                    <select
+                                        className="h-7 w-full rounded-md border border-slate-200 bg-white px-2 text-xs"
+                                        value={draft.is_company}
+                                        onChange={(e) =>
+                                            setDraft({
+                                                ...draft,
+                                                is_company: e.target.value as EditDraft['is_company'],
+                                            })
+                                        }
+                                    >
+                                        <option value="">unknown</option>
+                                        <option value="true">Company (B2B)</option>
+                                        <option value="false">Individual</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <Label className="text-[10px]">Returning?</Label>
+                                    <select
+                                        className="h-7 w-full rounded-md border border-slate-200 bg-white px-2 text-xs"
+                                        value={draft.is_returning_customer}
+                                        onChange={(e) =>
+                                            setDraft({
+                                                ...draft,
+                                                is_returning_customer:
+                                                    e.target.value as EditDraft['is_returning_customer'],
+                                            })
+                                        }
+                                    >
+                                        <option value="">unknown</option>
+                                        <option value="true">Yes</option>
+                                        <option value="false">No</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <Label className="text-[10px]">Past email</Label>
+                                    <Input
+                                        className="h-7 text-xs"
+                                        value={draft.past_customer_email}
+                                        onChange={(e) =>
+                                            setDraft({
+                                                ...draft,
+                                                past_customer_email: e.target.value,
+                                            })
+                                        }
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <Label className="text-[10px]">Delivery</Label>
+                                    <select
+                                        className="h-7 w-full rounded-md border border-slate-200 bg-white px-2 text-xs"
+                                        value={draft.delivery_method}
+                                        onChange={(e) =>
+                                            setDraft({
+                                                ...draft,
+                                                delivery_method:
+                                                    e.target.value as EditDraft['delivery_method'],
+                                            })
+                                        }
+                                    >
+                                        <option value="">—</option>
+                                        <option value="delivery">Deliver to address</option>
+                                        <option value="collect">Collect from shop</option>
+                                    </select>
+                                </div>
+                                {draft.delivery_method === 'delivery' && (
+                                    <>
+                                        <div className="col-span-2">
+                                            <Label className="text-[10px]">Address line 1</Label>
+                                            <Input
+                                                className="h-7 text-xs"
+                                                value={draft.address1}
+                                                onChange={(e) =>
+                                                    setDraft({ ...draft, address1: e.target.value })
+                                                }
+                                            />
+                                        </div>
+                                        <div>
+                                            <Label className="text-[10px]">Line 2</Label>
+                                            <Input
+                                                className="h-7 text-xs"
+                                                value={draft.address2}
+                                                onChange={(e) =>
+                                                    setDraft({ ...draft, address2: e.target.value })
+                                                }
+                                            />
+                                        </div>
+                                        <div>
+                                            <Label className="text-[10px]">Postcode</Label>
+                                            <Input
+                                                className="h-7 text-xs"
+                                                value={draft.postcode}
+                                                onChange={(e) =>
+                                                    setDraft({ ...draft, postcode: e.target.value })
+                                                }
+                                            />
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    )}
 
                     {selected.quotes.length > 0 && (
                         <div className="mb-4">
