@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Printer, Eye, EyeOff, Loader2, PlugZap } from 'lucide-react';
+import { Printer, Eye, EyeOff, Loader2, PlugZap, FlaskConical, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { AgentModuleProps } from '@/types/agent';
 import type { CraigSetting } from '../../api';
@@ -54,6 +54,17 @@ interface IntegrationHealth {
     notes?: string | null;
 }
 
+interface TestOrder {
+    present: boolean;
+    order_id?: string;
+    order_number?: string;
+    customer_id?: string;
+    marker?: string;
+    created_at?: string;
+    status?: 'open' | 'cancelled';
+    dry_run?: boolean;
+}
+
 export function PrintLogicTab({ organizationSlug, apiFetch }: AgentModuleProps) {
     const [settings, setSettings] = useState<Record<PLKey, CraigSetting | null> | null>(null);
     const [drafts, setDrafts] = useState<Record<PLKey, string>>(EMPTY);
@@ -62,6 +73,93 @@ export function PrintLogicTab({ organizationSlug, apiFetch }: AgentModuleProps) 
     const [revealKey, setRevealKey] = useState(false);
     const [health, setHealth] = useState<IntegrationHealth | null>(null);
     const [testing, setTesting] = useState(false);
+    const [testOrder, setTestOrder] = useState<TestOrder | null>(null);
+    const [creatingTestOrder, setCreatingTestOrder] = useState(false);
+    const [cancellingTestOrder, setCancellingTestOrder] = useState(false);
+
+    async function loadTestOrder() {
+        try {
+            const data = await apiFetch<TestOrder>(
+                `/admin/api/orgs/${organizationSlug}/integrations/printlogic/test-order`,
+            );
+            setTestOrder(data);
+        } catch {
+            /* swallow — card just hides */
+        }
+    }
+
+    async function createTestOrder() {
+        setCreatingTestOrder(true);
+        try {
+            const res = await apiFetch<{
+                ok: boolean;
+                dry_run: boolean;
+                order_id?: string;
+                order_number?: string;
+                customer_id?: string;
+                marker?: string;
+                created_at?: string;
+                error?: string;
+            }>(
+                `/admin/api/orgs/${organizationSlug}/integrations/printlogic/test-order`,
+                { method: 'POST' },
+            );
+            if (!res.ok) {
+                toast.error(`Test order failed: ${res.error ?? 'unknown'}`);
+                return;
+            }
+            const tag = res.dry_run ? 'DRY-RUN' : 'LIVE';
+            toast.success(
+                `[${tag}] Test order created — order_number=${res.order_number}`,
+            );
+            await loadTestOrder();
+        } catch (e) {
+            toast.error('Test order failed: ' + e);
+        } finally {
+            setCreatingTestOrder(false);
+        }
+    }
+
+    async function cancelTestOrder() {
+        setCancellingTestOrder(true);
+        try {
+            const res = await apiFetch<{
+                ok: boolean;
+                dry_run?: boolean;
+                order_number?: string;
+                error?: string;
+            }>(
+                `/admin/api/orgs/${organizationSlug}/integrations/printlogic/test-order/cancel`,
+                { method: 'POST' },
+            );
+            if (!res.ok) {
+                toast.error(`Cancel failed: ${res.error ?? 'unknown'}`);
+                return;
+            }
+            toast.success(
+                res.dry_run
+                    ? `Dry-run pointer cleared (no real order to cancel)`
+                    : `Order ${res.order_number} marked Cancelled in PrintLogic`,
+            );
+            await loadTestOrder();
+        } catch (e) {
+            toast.error('Cancel failed: ' + e);
+        } finally {
+            setCancellingTestOrder(false);
+        }
+    }
+
+    async function dismissTestOrderCard() {
+        try {
+            await apiFetch(
+                `/admin/api/orgs/${organizationSlug}/integrations/printlogic/test-order/clear`,
+                { method: 'POST' },
+            );
+            setTestOrder({ present: false });
+        } catch (e) {
+            toast.error('Dismiss failed: ' + e);
+        }
+    }
 
     async function testConnection() {
         setTesting(true);
@@ -105,6 +203,12 @@ export function PrintLogicTab({ organizationSlug, apiFetch }: AgentModuleProps) 
             cancelled = true;
         };
     }, [organizationSlug, apiFetch]);
+
+    // Load last test order on mount + when api_key changes
+    useEffect(() => {
+        loadTestOrder();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [organizationSlug]);
 
     // Poll health every 30s while tab is open
     useEffect(() => {
@@ -261,6 +365,135 @@ export function PrintLogicTab({ organizationSlug, apiFetch }: AgentModuleProps) 
                             <p className="sm:col-span-2 text-xs text-slate-500">{health.notes}</p>
                         )}
                     </div>
+                </CardContent>
+            </Card>
+
+            {/* Test-order probe — create + cancel a sentinel PrintLogic order */}
+            <Card>
+                <CardHeader>
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
+                                <FlaskConical className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <CardTitle>Test order probe</CardTitle>
+                                <CardDescription>
+                                    Push a sentinel order tagged{' '}
+                                    <code>[CRAIG-PROBE-DELETE-ME]</code> to validate
+                                    the full create→cancel cycle. In dry-run mode this
+                                    returns a synthetic <code>DRY-xxxx</code> id without
+                                    contacting PrintLogic. In live mode it creates a real
+                                    order — cancel it immediately after the demo.
+                                </CardDescription>
+                            </div>
+                        </div>
+                    </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    {testOrder?.present ? (
+                        <div className="rounded-lg border bg-slate-50 p-4 space-y-2">
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="text-sm font-medium">
+                                    Last test order
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Badge variant={testOrder.dry_run ? 'secondary' : 'warning'}>
+                                        {testOrder.dry_run ? 'Dry-run' : 'LIVE'}
+                                    </Badge>
+                                    <Badge variant={testOrder.status === 'cancelled' ? 'success' : 'secondary'}>
+                                        {testOrder.status === 'cancelled' ? 'Cancelled' : 'Open'}
+                                    </Badge>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
+                                <div>
+                                    <span className="text-slate-500">order_number: </span>
+                                    <code className="font-mono">{testOrder.order_number}</code>
+                                </div>
+                                <div>
+                                    <span className="text-slate-500">order_id: </span>
+                                    <code className="font-mono">{testOrder.order_id}</code>
+                                </div>
+                                <div>
+                                    <span className="text-slate-500">customer_id: </span>
+                                    <code className="font-mono">{testOrder.customer_id || '—'}</code>
+                                </div>
+                                <div>
+                                    <span className="text-slate-500">created: </span>
+                                    {testOrder.created_at
+                                        ? new Date(testOrder.created_at).toLocaleString('en-IE')
+                                        : '—'}
+                                </div>
+                                {testOrder.marker && (
+                                    <div className="sm:col-span-2">
+                                        <span className="text-slate-500">marker: </span>
+                                        <code className="font-mono">{testOrder.marker}</code>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex flex-wrap gap-2 pt-2">
+                                {testOrder.status !== 'cancelled' && (
+                                    <Button
+                                        size="sm"
+                                        variant="destructive"
+                                        onClick={cancelTestOrder}
+                                        disabled={cancellingTestOrder}
+                                    >
+                                        {cancellingTestOrder ? (
+                                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                        ) : (
+                                            <X className="mr-1 h-3 w-3" />
+                                        )}
+                                        Cancel order
+                                    </Button>
+                                )}
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={dismissTestOrderCard}
+                                    disabled={cancellingTestOrder || creatingTestOrder}
+                                    title="Clear from the dashboard (does not touch PrintLogic)"
+                                >
+                                    Dismiss
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={createTestOrder}
+                                    disabled={creatingTestOrder || !hasKey}
+                                >
+                                    {creatingTestOrder ? (
+                                        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                    ) : (
+                                        <FlaskConical className="mr-1 h-3 w-3" />
+                                    )}
+                                    Create another
+                                </Button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed p-4">
+                            <div className="text-sm text-slate-600">
+                                No test order on file.{' '}
+                                {dryRun
+                                    ? 'Will return a synthetic DRY-xxxx id.'
+                                    : 'Will create a REAL PrintLogic order — cancel after the demo.'}
+                            </div>
+                            <Button
+                                size="sm"
+                                onClick={createTestOrder}
+                                disabled={creatingTestOrder || !hasKey}
+                            >
+                                {creatingTestOrder ? (
+                                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                ) : (
+                                    <FlaskConical className="mr-1 h-3 w-3" />
+                                )}
+                                Create test order
+                            </Button>
+                        </div>
+                    )}
                 </CardContent>
             </Card>
 
