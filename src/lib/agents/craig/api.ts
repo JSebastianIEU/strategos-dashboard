@@ -43,6 +43,14 @@ export interface CraigQuote {
     stripe_payment_status?: string | null;
     stripe_paid_at?: string | null;
     stripe_last_error?: string | null;
+    // Missive outbound draft state (Phase C/D). Populated when "Approve"
+    // fires on the dashboard — server creates a Missive draft to the
+    // customer with the PDF attached + the Stripe payment link inline.
+    missive_draft_id?: string | null;
+    missive_drafted_at?: string | null;
+    missive_last_error?: string | null;
+    /** When the customer said "yes" in the chat (LLM confirm_order). Null = never. */
+    client_confirmed_at?: string | null;
 }
 
 /** Server response shape from POST /quotes/:id/create-payment-link */

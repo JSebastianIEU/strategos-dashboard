@@ -97,7 +97,13 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
 
     async function updateStatus(id: number, newStatus: QuoteStatus) {
         try {
-            const { quote } = await apiFetch<{ quote: CraigQuote }>(
+            const response = await apiFetch<{
+                quote: CraigQuote;
+                integrations?: {
+                    stripe?: { ok: boolean; url?: string | null; disabled: boolean; error?: string | null };
+                    missive?: { ok: boolean; draft_id?: string | null; skipped: boolean; skip_reason?: string | null; error?: string | null };
+                };
+            }>(
                 `/admin/api/orgs/${organizationSlug}/quotes/${id}`,
                 {
                     method: 'PATCH',
@@ -105,8 +111,35 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
                     body: JSON.stringify({ status: newStatus }),
                 },
             );
+            const { quote, integrations } = response;
             setQuotes((q) => q?.map((row) => (row.id === id ? quote : row)) ?? null);
-            toast.success(`Quote JP-${String(id).padStart(4, '0')} → ${newStatus}`);
+
+            const ref = `JP-${String(id).padStart(4, '0')}`;
+
+            // When Approve fires, the server auto-creates a Stripe Payment
+            // Link + a Missive draft. Surface what happened so Justin gets
+            // immediate feedback on whether the customer email is going out.
+            if (newStatus === 'approved' && integrations) {
+                const lines: string[] = [`${ref} approved`];
+                if (integrations.stripe?.ok) {
+                    lines.push(`✓ Stripe payment link created`);
+                } else if (integrations.stripe?.disabled) {
+                    lines.push(`· Stripe disabled (not connected)`);
+                } else if (integrations.stripe?.error) {
+                    lines.push(`✗ Stripe failed: ${integrations.stripe.error.slice(0, 80)}`);
+                }
+                if (integrations.missive?.ok) {
+                    lines.push(`✓ Missive draft ready in your inbox`);
+                } else if (integrations.missive?.skipped) {
+                    const reason = integrations.missive.skip_reason ?? 'unknown';
+                    lines.push(`· Missive skipped (${reason})`);
+                } else if (integrations.missive?.error) {
+                    lines.push(`✗ Missive failed: ${integrations.missive.error.slice(0, 80)}`);
+                }
+                toast.success(lines.join('\n'));
+            } else {
+                toast.success(`${ref} → ${newStatus}`);
+            }
         } catch (e) {
             toast.error('Failed to update: ' + e);
         }
