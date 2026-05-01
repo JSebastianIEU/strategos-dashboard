@@ -51,6 +51,12 @@ export interface CraigQuote {
     missive_last_error?: string | null;
     /** When the customer said "yes" in the chat (LLM confirm_order). Null = never. */
     client_confirmed_at?: string | null;
+    // Phase F — shipping line item + customer-uploaded artwork
+    shipping_cost_ex_vat?: number;
+    shipping_cost_inc_vat?: number;
+    artwork_file_url?: string | null;
+    artwork_file_name?: string | null;
+    artwork_file_size?: number | null;
 }
 
 /** Server response shape from POST /quotes/:id/create-payment-link */

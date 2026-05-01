@@ -319,9 +319,52 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
         {
             header: 'Total',
             accessorKey: 'total',
-            cell: ({ row }) => (
-                <span className="font-semibold tabular-nums">€{row.original.total.toFixed(2)}</span>
-            ),
+            cell: ({ row }) => {
+                const q = row.original;
+                const shipping = q.shipping_cost_inc_vat ?? 0;
+                return (
+                    <div className="flex flex-col leading-tight">
+                        <span className="font-semibold tabular-nums">
+                            €{q.total.toFixed(2)}
+                        </span>
+                        {shipping > 0 && (
+                            <span className="text-[10px] text-slate-500 tabular-nums">
+                                incl. €{shipping.toFixed(2)} delivery
+                            </span>
+                        )}
+                    </div>
+                );
+            },
+        },
+        {
+            header: 'Artwork',
+            id: 'artwork',
+            cell: ({ row }) => {
+                const q = row.original;
+                if (!q.artwork_file_url) {
+                    return <span className="text-xs text-slate-400">—</span>;
+                }
+                const sizeKb = q.artwork_file_size
+                    ? Math.round(q.artwork_file_size / 1024)
+                    : null;
+                return (
+                    <a
+                        href={q.artwork_file_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={q.artwork_file_name ?? ''}
+                        className="inline-flex items-center gap-1 text-xs text-blue-700 hover:underline truncate max-w-[160px]"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        📎 {q.artwork_file_name ?? 'file'}
+                        {sizeKb !== null && (
+                            <span className="text-slate-400">
+                                ({sizeKb >= 1024 ? `${(sizeKb / 1024).toFixed(1)}MB` : `${sizeKb}KB`})
+                            </span>
+                        )}
+                    </a>
+                );
+            },
         },
         {
             header: 'Status',
