@@ -17,7 +17,7 @@ import {
 import { toast } from 'sonner';
 import type { ColumnDef } from '@tanstack/react-table';
 import type { AgentModuleProps } from '@/types/agent';
-import type { CraigQuote, CreatePaymentLinkResult, PushToPrintLogicResult, QuoteStatus } from '../api';
+import type { CraigArtworkFile, CraigQuote, CreatePaymentLinkResult, PushToPrintLogicResult, QuoteStatus } from '../api';
 import { DataTable } from '@/components/blocks/DataTable';
 import { PageHeader } from '@/components/blocks/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -59,6 +59,20 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
     const [channel, setChannel] = useState<string | 'all'>('all');
     const [search, setSearch] = useState('');
     const [pdfQuote, setPdfQuote] = useState<CraigQuote | null>(null);
+    /** Phase G — quote selected for the right-side detail panel (row click). */
+    const [selectedQuote, setSelectedQuote] = useState<CraigQuote | null>(null);
+    /** Conversation hydrated for the selected quote (lazy fetch on row click). */
+    const [selectedConv, setSelectedConv] = useState<{
+        customer_name?: string | null;
+        customer_email?: string | null;
+        customer_phone?: string | null;
+        is_company?: boolean | null;
+        is_returning_customer?: boolean | null;
+        past_customer_email?: string | null;
+        delivery_method?: string | null;
+        delivery_address?: { address1?: string; address2?: string; address3?: string; address4?: string; postcode?: string } | null;
+        customer_has_own_artwork?: boolean | null;
+    } | null>(null);
     /** Quote ids that are currently mid-push to PrintLogic (shows spinner). */
     const [pushingIds, setPushingIds] = useState<Set<number>>(new Set());
     /** Quote id whose PrintLogic order_id was last copied — drives the ✓ flash. */
@@ -94,6 +108,20 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
                 String(row.id).includes(q),
         );
     }, [quotes, search]);
+
+    async function openQuoteDetail(q: CraigQuote) {
+        setSelectedQuote(q);
+        setSelectedConv(null);
+        if (!q.conversation_id) return;
+        try {
+            const data = await apiFetch<{ conversation: typeof selectedConv }>(
+                `/admin/api/orgs/${organizationSlug}/conversations/${q.conversation_id}`,
+            );
+            setSelectedConv(data.conversation);
+        } catch {
+            // sidebar still opens with quote-only data; conv lookup is best-effort
+        }
+    }
 
     async function updateStatus(id: number, newStatus: QuoteStatus) {
         try {
@@ -689,16 +717,32 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
 
             {error && <ErrorState description={error} className="mb-4" />}
 
-            {quotes === null ? (
-                <Skeleton className="h-64" />
-            ) : (
-                <DataTable
-                    columns={columns}
-                    data={filtered}
-                    emptyTitle="No quotes match"
-                    emptyDescription="Adjust your filters or wait for Craig to produce a new quote."
-                />
-            )}
+            <div className={selectedQuote ? "grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_440px] gap-6" : ""}>
+                <div>
+                    {quotes === null ? (
+                        <Skeleton className="h-64" />
+                    ) : (
+                        <DataTable
+                            columns={columns}
+                            data={filtered}
+                            emptyTitle="No quotes match"
+                            emptyDescription="Adjust your filters or wait for Craig to produce a new quote."
+                            onRowClick={openQuoteDetail}
+                        />
+                    )}
+                </div>
+
+                {selectedQuote && (
+                    <QuoteDetailSidebar
+                        quote={selectedQuote}
+                        conv={selectedConv}
+                        organizationSlug={organizationSlug}
+                        agentApiBaseUrl={agentApiBaseUrl}
+                        onClose={() => { setSelectedQuote(null); setSelectedConv(null); }}
+                        apiFetch={apiFetch}
+                    />
+                )}
+            </div>
 
             <PdfDrawer
                 open={!!pdfQuote}
@@ -707,6 +751,233 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
                 url={pdfQuote ? `${agentApiBaseUrl}/quotes/${pdfQuote.id}/pdf` : ''}
             />
         </div>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase G — Quote detail sidebar (right panel)
+// Renders the full Quote + parent Conversation funnel data, artwork
+// previews, shipping breakdown, and the existing action buttons.
+// ─────────────────────────────────────────────────────────────────────
+
+interface QuoteDetailSidebarProps {
+    quote: CraigQuote;
+    conv: {
+        customer_name?: string | null;
+        customer_email?: string | null;
+        customer_phone?: string | null;
+        is_company?: boolean | null;
+        is_returning_customer?: boolean | null;
+        past_customer_email?: string | null;
+        delivery_method?: string | null;
+        delivery_address?: { address1?: string; address2?: string; address3?: string; address4?: string; postcode?: string } | null;
+        customer_has_own_artwork?: boolean | null;
+    } | null;
+    organizationSlug: string;
+    agentApiBaseUrl: string;
+    onClose: () => void;
+    apiFetch: AgentModuleProps['apiFetch'];
+}
+
+function QuoteDetailSidebar({ quote, conv, organizationSlug, agentApiBaseUrl, onClose, apiFetch }: QuoteDetailSidebarProps) {
+    void apiFetch; // not used here — sidebar reads quote+conv from props
+    void agentApiBaseUrl;
+
+    /**
+     * Build a URL the dashboard browser can hit. Uses the dashboard's
+     * Next.js binary-proxy route so the JWT stays server-side. Inputs
+     * to that route: ?agent=craig&client={slug}&path=/admin/api/...
+     */
+    function fileProxyUrl(file: CraigArtworkFile): string {
+        const path = file.url.replace('{org}', organizationSlug);
+        const qs = new URLSearchParams({
+            agent: 'craig',
+            client: organizationSlug,
+            path,
+        });
+        return `/api/agent-binary?${qs.toString()}`;
+    }
+
+    const ref = `JP-${String(quote.id).padStart(4, '0')}`;
+    const goods = Number(quote.final_price_inc_vat || 0);
+    const shipping = Number(quote.shipping_cost_inc_vat || 0);
+    const artwork = Number(quote.artwork_cost || 0) * 1.23; // ex VAT * 23%
+    const total = Number(quote.total || (goods + shipping));
+    const addr = conv?.delivery_address;
+    const addrLine = addr
+        ? [addr.address1, addr.address2, addr.address3, addr.address4, addr.postcode].filter(Boolean).join(', ')
+        : null;
+
+    return (
+        <aside className="rounded-xl border border-slate-200 bg-white p-5 h-fit sticky top-6 max-h-[88vh] overflow-y-auto">
+            <div className="flex items-start justify-between mb-4">
+                <div>
+                    <div className="text-sm font-semibold text-slate-900">Quote {ref}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                        {quote.product_key} · status {quote.status.replace(/_/g, ' ')}
+                    </div>
+                </div>
+                <button
+                    type="button"
+                    className="text-xs text-slate-500 hover:text-slate-900 px-2"
+                    onClick={onClose}
+                >
+                    Close
+                </button>
+            </div>
+
+            {/* Customer */}
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs space-y-1.5 mb-4">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Customer</div>
+                <div className="font-medium text-slate-900">{conv?.customer_name ?? '—'}</div>
+                {conv?.customer_email && <div className="text-slate-700">{conv.customer_email}</div>}
+                {conv?.customer_phone && <div className="text-slate-700">{conv.customer_phone}</div>}
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                    {conv?.is_company === true && <Badge variant="secondary">Company</Badge>}
+                    {conv?.is_company === false && <Badge variant="secondary">Individual</Badge>}
+                    {conv?.is_returning_customer && <Badge variant="secondary">Returning</Badge>}
+                    {conv?.delivery_method === 'delivery' && <Badge variant="secondary">Delivery</Badge>}
+                    {conv?.delivery_method === 'collect' && <Badge variant="secondary">Collection</Badge>}
+                </div>
+                {conv?.is_returning_customer && conv.past_customer_email && (
+                    <div className="text-slate-600 pt-1">Past account: {conv.past_customer_email}</div>
+                )}
+                {addrLine && (
+                    <div className="text-slate-600 pt-1">📦 {addrLine}</div>
+                )}
+            </div>
+
+            {/* Pricing breakdown */}
+            <div className="rounded-md border border-slate-200 bg-white p-3 text-xs space-y-1 mb-4">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Pricing</div>
+                <div className="flex justify-between">
+                    <span>Goods (inc VAT)</span>
+                    <span className="tabular-nums">€{goods.toFixed(2)}</span>
+                </div>
+                {artwork > 0 && (
+                    <div className="flex justify-between">
+                        <span>Design service (inc VAT)</span>
+                        <span className="tabular-nums">€{artwork.toFixed(2)}</span>
+                    </div>
+                )}
+                {shipping > 0 ? (
+                    <div className="flex justify-between">
+                        <span>Just Print Delivery</span>
+                        <span className="tabular-nums">€{shipping.toFixed(2)}</span>
+                    </div>
+                ) : (conv?.delivery_method === 'delivery') ? (
+                    <div className="flex justify-between text-emerald-700">
+                        <span>Delivery</span>
+                        <span className="tabular-nums">FREE (over €100)</span>
+                    </div>
+                ) : null}
+                <div className="flex justify-between font-semibold border-t border-slate-200 pt-1 mt-1">
+                    <span>Total inc VAT</span>
+                    <span className="tabular-nums">€{total.toFixed(2)}</span>
+                </div>
+            </div>
+
+            {/* Artwork files */}
+            {quote.artwork_files && quote.artwork_files.length > 0 && (
+                <div className="rounded-md border border-slate-200 bg-white p-3 text-xs space-y-2 mb-4">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                        Artwork ({quote.artwork_files.length})
+                    </div>
+                    {quote.artwork_files.map((f, i) => {
+                        const proxyUrl = fileProxyUrl(f);
+                        const isImage = (f.content_type ?? '').startsWith('image/');
+                        const sizeMb = (f.size / (1024 * 1024)).toFixed(1);
+                        return (
+                            <div key={i} className="rounded-md border border-slate-100 bg-slate-50 p-2">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-base">📎</span>
+                                    <span className="font-medium text-slate-900 truncate flex-1" title={f.filename}>
+                                        {f.filename}
+                                    </span>
+                                    <span className="text-slate-500 text-[10px]">{sizeMb} MB</span>
+                                </div>
+                                {isImage && (
+                                    <a href={proxyUrl} target="_blank" rel="noopener noreferrer">
+                                        <img
+                                            src={proxyUrl}
+                                            alt={f.filename}
+                                            className="mt-2 max-h-44 w-full object-contain rounded bg-white cursor-zoom-in"
+                                        />
+                                    </a>
+                                )}
+                                <div className="flex gap-3 mt-2">
+                                    <a
+                                        href={proxyUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-blue-700 hover:underline text-[11px]"
+                                    >
+                                        Open in tab ↗
+                                    </a>
+                                    <a
+                                        href={proxyUrl}
+                                        download={f.filename}
+                                        className="text-blue-700 hover:underline text-[11px]"
+                                    >
+                                        Download
+                                    </a>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
+            {/* Specs JSON */}
+            {Object.keys(quote.specs as Record<string, unknown>).length > 0 && (
+                <div className="rounded-md border border-slate-200 bg-white p-3 text-xs space-y-1 mb-4">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Specs</div>
+                    <pre className="font-mono text-[11px] text-slate-700 whitespace-pre-wrap break-all">
+                        {JSON.stringify(quote.specs, null, 2)}
+                    </pre>
+                </div>
+            )}
+
+            {/* Integration state */}
+            <div className="rounded-md border border-slate-200 bg-white p-3 text-xs space-y-1.5 mb-4">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Integrations</div>
+                {quote.stripe_payment_link_url && (
+                    <div>
+                        <span className="text-slate-500">Stripe: </span>
+                        <Badge variant={quote.stripe_payment_status === 'paid' ? 'success' : 'secondary'}>
+                            {quote.stripe_payment_status ?? 'unpaid'}
+                        </Badge>
+                        {' '}
+                        <a
+                            href={quote.stripe_payment_link_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-700 hover:underline ml-1"
+                        >
+                            Payment link ↗
+                        </a>
+                    </div>
+                )}
+                {quote.printlogic_order_id && (
+                    <div>
+                        <span className="text-slate-500">PrintLogic: </span>
+                        <code className="font-mono">{quote.printlogic_order_id}</code>
+                        {quote.printlogic_order_id.startsWith('DRY-') && (
+                            <Badge variant="secondary" className="ml-1">DRY</Badge>
+                        )}
+                    </div>
+                )}
+                {quote.missive_draft_id && (
+                    <div>
+                        <span className="text-slate-500">Missive draft: </span>
+                        <code className="font-mono">{quote.missive_draft_id.slice(0, 12)}…</code>
+                    </div>
+                )}
+                {!quote.stripe_payment_link_url && !quote.printlogic_order_id && !quote.missive_draft_id && (
+                    <div className="text-slate-500 italic">No integrations fired yet.</div>
+                )}
+            </div>
+        </aside>
     );
 }
 

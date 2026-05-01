@@ -51,12 +51,25 @@ export interface CraigQuote {
     missive_last_error?: string | null;
     /** When the customer said "yes" in the chat (LLM confirm_order). Null = never. */
     client_confirmed_at?: string | null;
-    // Phase F — shipping line item + customer-uploaded artwork
+    // Phase F — shipping line item + customer-uploaded artwork (singular, deprecated)
     shipping_cost_ex_vat?: number;
     shipping_cost_inc_vat?: number;
     artwork_file_url?: string | null;
     artwork_file_name?: string | null;
     artwork_file_size?: number | null;
+    // Phase G — multi-file artwork. URLs point to the authenticated
+    // proxy endpoint, NOT direct GCS, so the dashboard can fetch +
+    // render previews without 403s.
+    artwork_files?: Array<CraigArtworkFile>;
+}
+
+export interface CraigArtworkFile {
+    /** Proxy URL: /admin/api/orgs/{slug}/quotes/{id}/artwork/{idx}/file */
+    url: string;
+    filename: string;
+    size: number;
+    content_type?: string;
+    uploaded_at?: string | null;
 }
 
 /** Server response shape from POST /quotes/:id/create-payment-link */
