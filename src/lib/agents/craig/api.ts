@@ -128,6 +128,17 @@ export interface CraigConversation {
     /** 'delivery' | 'collect' | null */
     delivery_method?: string | null;
     delivery_address?: CraigDeliveryAddress | null;
+    /**
+     * v30 — artwork question state.
+     * - `customer_has_own_artwork === true` + `artwork_will_send_later === false`
+     *   → customer has artwork ready (probably uploaded)
+     * - `customer_has_own_artwork === true` + `artwork_will_send_later === true`
+     *   → customer chose "I'll send it later" — pending badge in sidebar
+     * - `customer_has_own_artwork === false`
+     *   → customer wants the €65/hr design service
+     */
+    customer_has_own_artwork?: boolean | null;
+    artwork_will_send_later?: boolean;
 }
 
 export interface CraigConversationDetail extends CraigConversation {

@@ -772,6 +772,9 @@ interface QuoteDetailSidebarProps {
         delivery_method?: string | null;
         delivery_address?: { address1?: string; address2?: string; address3?: string; address4?: string; postcode?: string } | null;
         customer_has_own_artwork?: boolean | null;
+        // v30 — set when customer chose "I'll send my artwork later".
+        // Drives the yellow "Artwork pending" badge in the sidebar.
+        artwork_will_send_later?: boolean;
     } | null;
     organizationSlug: string;
     agentApiBaseUrl: string;
@@ -876,6 +879,22 @@ function QuoteDetailSidebar({ quote, conv, organizationSlug, agentApiBaseUrl, on
                     <span className="tabular-nums">€{total.toFixed(2)}</span>
                 </div>
             </div>
+
+            {/* v30 — Artwork pending badge: customer chose "I'll send
+                my artwork later" and no files have arrived yet. */}
+            {conv?.artwork_will_send_later && (!quote.artwork_files || quote.artwork_files.length === 0) && (
+                <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs mb-4">
+                    <div className="flex items-start gap-2">
+                        <span className="text-base leading-none">⏳</span>
+                        <div>
+                            <div className="font-semibold text-amber-900">Artwork pending</div>
+                            <div className="text-amber-800 mt-0.5">
+                                Customer said they&apos;ll send the artwork later. Don&apos;t push to PrintLogic until they&apos;ve sent it.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Artwork files */}
             {quote.artwork_files && quote.artwork_files.length > 0 && (
