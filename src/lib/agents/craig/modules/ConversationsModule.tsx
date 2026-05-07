@@ -5,6 +5,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { FileText, Download, Trash2, Pencil, Check, X, Building2, RotateCw, Truck, Store } from 'lucide-react';
 import type { AgentModuleProps } from '@/types/agent';
 import type { CraigConversation, CraigConversationDetail, CraigDeliveryAddress } from '../api';
+import { TranscriptViewer } from '../components/TranscriptViewer';
 import { DataTable } from '@/components/blocks/DataTable';
 import { PageHeader } from '@/components/blocks/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -568,23 +569,10 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
                         </div>
                     )}
 
-                    <div className="space-y-3 max-h-[55vh] overflow-y-auto">
-                        {selected.messages.map((m, i) => (
-                            <div
-                                key={i}
-                                className={
-                                    m.role === 'user'
-                                        ? 'rounded-lg bg-[var(--color-primary,#040f2a)] text-white p-3 ml-8 text-sm'
-                                        : 'rounded-lg bg-slate-100 p-3 mr-8 text-sm'
-                                }
-                            >
-                                <div className="text-[10px] uppercase tracking-wider opacity-60 mb-1">
-                                    {m.role}
-                                </div>
-                                <div className="whitespace-pre-wrap">{m.content}</div>
-                            </div>
-                        ))}
-                    </div>
+                    <TranscriptViewer
+                        messages={selected.messages}
+                        maxHeightClass="max-h-[55vh]"
+                    />
                 </aside>
             )}
         </div>

@@ -51,6 +51,16 @@ export interface CraigQuote {
     missive_last_error?: string | null;
     /** When the customer said "yes" in the chat (LLM confirm_order). Null = never. */
     client_confirmed_at?: string | null;
+    // v33 — operator notification + approval timestamps. Drive the
+    // LifecycleStage derivation (see quote-lifecycle.ts).
+    /** When Justin approved (PATCH approved). Null = not yet. */
+    approved_at?: string | null;
+    /** When the ops notification email landed in Justin's inbox. Null = not sent yet. */
+    notification_sent_at?: string | null;
+    /** Resend message id, for audit. */
+    notification_message_id?: string | null;
+    /** Captures Resend / settings errors. Surfaced as a warning chip in the sidebar. */
+    notification_last_error?: string | null;
     // Phase F — shipping line item + customer-uploaded artwork (singular, deprecated)
     shipping_cost_ex_vat?: number;
     shipping_cost_inc_vat?: number;

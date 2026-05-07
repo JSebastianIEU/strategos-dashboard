@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
     CheckCircle2,
     XCircle,
@@ -18,6 +19,11 @@ import { toast } from 'sonner';
 import type { ColumnDef } from '@tanstack/react-table';
 import type { AgentModuleProps } from '@/types/agent';
 import type { CraigArtworkFile, CraigQuote, CreatePaymentLinkResult, PushToPrintLogicResult, QuoteStatus } from '../api';
+import { deriveStage, countByStage, STAGE_META, STAGE_ORDER } from '../quote-lifecycle';
+import type { LifecycleStage } from '../quote-lifecycle';
+import { LifecycleBadge } from '../components/LifecycleBadge';
+import { StageTracker } from '../components/StageTracker';
+import { TranscriptViewer } from '../components/TranscriptViewer';
 import { DataTable } from '@/components/blocks/DataTable';
 import { PageHeader } from '@/components/blocks/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -55,8 +61,12 @@ const CHANNELS: Array<{ value: string | 'all'; label: string }> = [
 export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: AgentModuleProps) {
     const [quotes, setQuotes] = useState<CraigQuote[] | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [status, setStatus] = useState<QuoteStatus | 'all'>('pending_approval');
+    const [status, setStatus] = useState<QuoteStatus | 'all'>('all');
     const [channel, setChannel] = useState<string | 'all'>('all');
+    // v33 — lifecycle-stage filter. Defaults to 'awaiting_approval'
+    // because that's the queue Justin opens the dashboard FOR. Click
+    // 'All' to see everything, or pick a different stage to drill in.
+    const [stageFilter, setStageFilter] = useState<LifecycleStage | 'all'>('awaiting_approval');
     const [search, setSearch] = useState('');
     const [pdfQuote, setPdfQuote] = useState<CraigQuote | null>(null);
     /** Phase G — quote selected for the right-side detail panel (row click). */
@@ -72,6 +82,9 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
         delivery_method?: string | null;
         delivery_address?: { address1?: string; address2?: string; address3?: string; address4?: string; postcode?: string } | null;
         customer_has_own_artwork?: boolean | null;
+        artwork_will_send_later?: boolean;
+        // v33 — full conversation transcript (rendered inline in the sidebar).
+        messages?: Array<{ role: string; content: string }>;
     } | null>(null);
     /** Quote ids that are currently mid-push to PrintLogic (shows spinner). */
     const [pushingIds, setPushingIds] = useState<Set<number>>(new Set());
@@ -98,16 +111,59 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
         };
     }, [organizationSlug, apiFetch, status, channel]);
 
+    // v33 — deep link from operator notification email. The Resend
+    // template links to `?focus_quote=<id>`; when that param is set
+    // and the quote is in our list, auto-open the sidebar + scroll
+    // it into view. Only runs once per fresh mount + after quotes load.
+    const searchParams = useSearchParams();
+    const focusQuoteParam = searchParams?.get('focus_quote') ?? null;
+    useEffect(() => {
+        if (!focusQuoteParam || !quotes || quotes.length === 0) return;
+        const wantId = parseInt(focusQuoteParam, 10);
+        if (Number.isNaN(wantId)) return;
+        // Make sure the stage filter doesn't hide the focused row.
+        // Switching to 'all' is the safest default for arrived-from-email.
+        setStageFilter('all');
+        const target = quotes.find((q) => q.id === wantId);
+        if (target) {
+            void openQuoteDetail(target);
+            // Scroll into view after the sidebar mounts
+            setTimeout(() => {
+                const el = document.querySelector<HTMLElement>(
+                    `aside[data-quote-id="${wantId}"]`,
+                );
+                el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 200);
+        }
+        // Intentionally only run on the first quotes load OR when the
+        // param changes; subsequent re-renders shouldn't re-open.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [focusQuoteParam, quotes]);
+
+    /** v33 — stage counts for the chip badges. Always reflects the
+     *  full unfiltered set so the chips show the right totals
+     *  regardless of which stage is currently selected. */
+    const stageCounts = useMemo(
+        () => (quotes ? countByStage(quotes) : null),
+        [quotes],
+    );
+
     const filtered = useMemo(() => {
         if (!quotes) return [];
-        if (!search.trim()) return quotes;
-        const q = search.toLowerCase();
-        return quotes.filter(
-            (row) =>
-                row.product_key.toLowerCase().includes(q) ||
-                String(row.id).includes(q),
-        );
-    }, [quotes, search]);
+        let out = quotes;
+        if (stageFilter !== 'all') {
+            out = out.filter((row) => deriveStage(row) === stageFilter);
+        }
+        if (search.trim()) {
+            const q = search.toLowerCase();
+            out = out.filter(
+                (row) =>
+                    row.product_key.toLowerCase().includes(q) ||
+                    String(row.id).includes(q),
+            );
+        }
+        return out;
+    }, [quotes, search, stageFilter]);
 
     async function openQuoteDetail(q: CraigQuote) {
         setSelectedQuote(q);
@@ -395,12 +451,10 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
             },
         },
         {
-            header: 'Status',
+            header: 'Stage',
             accessorKey: 'status',
             cell: ({ row }) => (
-                <Badge variant={STATUS_VARIANT[row.original.status] ?? 'secondary'}>
-                    {row.original.status.replace(/_/g, ' ')}
-                </Badge>
+                <LifecycleBadge stage={deriveStage(row.original)} />
             ),
         },
         {
@@ -684,17 +738,35 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
                 description="Review, approve, reject, and download quotes Craig has generated."
             />
 
-            {/* Filters */}
+            {/* v33 — lifecycle-stage filter chips. The "All" chip
+                shows the total count; each stage chip shows its own
+                count. Default is "Awaiting approval" because that's
+                the queue Justin opens the dashboard for. */}
             <div className="mb-4 flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-1.5">
-                    {STATUS_LABELS.map((s) => (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                    <FilterChip
+                        label={`All${stageCounts ? ` (${quotes?.length ?? 0})` : ''}`}
+                        active={stageFilter === 'all'}
+                        onClick={() => setStageFilter('all')}
+                    />
+                    {STAGE_ORDER.map((stage) => {
+                        const count = stageCounts?.[stage] ?? 0;
+                        return (
+                            <FilterChip
+                                key={stage}
+                                label={`${STAGE_META[stage].label}${count ? ` (${count})` : ''}`}
+                                active={stageFilter === stage}
+                                onClick={() => setStageFilter(stage)}
+                            />
+                        );
+                    })}
+                    {stageCounts && stageCounts.rejected > 0 && (
                         <FilterChip
-                            key={s.value}
-                            label={s.label}
-                            active={status === s.value}
-                            onClick={() => setStatus(s.value)}
+                            label={`${STAGE_META.rejected.label} (${stageCounts.rejected})`}
+                            active={stageFilter === 'rejected'}
+                            onClick={() => setStageFilter('rejected')}
                         />
-                    ))}
+                    )}
                 </div>
                 <select
                     value={channel}
@@ -775,6 +847,8 @@ interface QuoteDetailSidebarProps {
         // v30 — set when customer chose "I'll send my artwork later".
         // Drives the yellow "Artwork pending" badge in the sidebar.
         artwork_will_send_later?: boolean;
+        // v33 — full conversation transcript for the inline TranscriptViewer.
+        messages?: Array<{ role: string; content: string }>;
     } | null;
     organizationSlug: string;
     agentApiBaseUrl: string;
@@ -812,12 +886,15 @@ function QuoteDetailSidebar({ quote, conv, organizationSlug, agentApiBaseUrl, on
         : null;
 
     return (
-        <aside className="rounded-xl border border-slate-200 bg-white p-5 h-fit sticky top-6 max-h-[88vh] overflow-y-auto">
-            <div className="flex items-start justify-between mb-4">
+        <aside
+            data-quote-id={quote.id}
+            className="rounded-xl border border-slate-200 bg-white p-5 h-fit sticky top-6 max-h-[88vh] overflow-y-auto"
+        >
+            <div className="flex items-start justify-between mb-3">
                 <div>
                     <div className="text-sm font-semibold text-slate-900">Quote {ref}</div>
                     <div className="mt-1 text-xs text-slate-500">
-                        {quote.product_key} · status {quote.status.replace(/_/g, ' ')}
+                        {quote.product_key}
                     </div>
                 </div>
                 <button
@@ -828,6 +905,19 @@ function QuoteDetailSidebar({ quote, conv, organizationSlug, agentApiBaseUrl, on
                     Close
                 </button>
             </div>
+
+            {/* v33 — Lifecycle stage tracker */}
+            <div className="mb-4">
+                <StageTracker quote={quote} />
+            </div>
+
+            {/* v33 — surface notification errors so Justin can retry */}
+            {quote.notification_last_error && !quote.notification_sent_at && (
+                <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-[11px] text-amber-800">
+                    <strong className="font-semibold">Notification not sent: </strong>
+                    {quote.notification_last_error}
+                </div>
+            )}
 
             {/* Customer */}
             <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs space-y-1.5 mb-4">
@@ -954,6 +1044,22 @@ function QuoteDetailSidebar({ quote, conv, organizationSlug, agentApiBaseUrl, on
                     <pre className="font-mono text-[11px] text-slate-700 whitespace-pre-wrap break-all">
                         {JSON.stringify(quote.specs, null, 2)}
                     </pre>
+                </div>
+            )}
+
+            {/* v33 — inline conversation transcript so Justin can read
+                what Craig said to the customer without leaving the
+                Quotations tab. Capped at 40vh so it doesn't push the
+                Approve action below the fold. */}
+            {conv && Array.isArray((conv as { messages?: unknown }).messages) && (
+                <div className="rounded-md border border-slate-200 bg-white p-3 text-xs space-y-2 mb-4">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">
+                        Conversation transcript
+                    </div>
+                    <TranscriptViewer
+                        messages={(conv as { messages: Array<{ role: string; content: string }> }).messages}
+                        maxHeightClass="max-h-[40vh]"
+                    />
                 </div>
             )}
 
