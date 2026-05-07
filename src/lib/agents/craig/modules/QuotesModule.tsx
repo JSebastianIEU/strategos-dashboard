@@ -121,11 +121,17 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
         if (!focusQuoteParam || !quotes || quotes.length === 0) return;
         const wantId = parseInt(focusQuoteParam, 10);
         if (Number.isNaN(wantId)) return;
-        // Make sure the stage filter doesn't hide the focused row.
-        // Switching to 'all' is the safest default for arrived-from-email.
-        setStageFilter('all');
         const target = quotes.find((q) => q.id === wantId);
         if (target) {
+            // Default the left-list filter to the focused quote's actual
+            // stage. For most notification clicks that's
+            // 'awaiting_approval' — the queue Justin came to action.
+            // If the quote already moved on (he was slow to click), the
+            // filter follows it so the row stays visible alongside the
+            // sidebar. Falls back to 'all' for stages without a chip.
+            const targetStage = deriveStage(target);
+            const validChip = STAGE_ORDER.includes(targetStage) || targetStage === 'rejected';
+            setStageFilter(validChip ? targetStage : 'all');
             void openQuoteDetail(target);
             // Scroll into view after the sidebar mounts
             setTimeout(() => {
