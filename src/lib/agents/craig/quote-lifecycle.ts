@@ -99,6 +99,16 @@ export const STAGE_ORDER: LifecycleStage[] = [
 /**
  * Derive the lifecycle stage from a quote row. Pure — no IO. Stable
  * across re-renders given the same input.
+ *
+ * Note: any quote at `status='pending_approval'` is classified as
+ * `awaiting_approval`, regardless of whether `notification_sent_at`
+ * was persisted. Originally this differentiated 'new' (notification
+ * not yet sent) from 'awaiting_approval' (notification sent), but
+ * from Justin's perspective both states are "this needs my eyes".
+ * If the notification email failed (Resend hiccup, missing API key,
+ * race during commit) we still want the row to show up in the
+ * Awaiting-approval queue so it doesn't fall through the cracks.
+ * The StageTracker still surfaces the missing timestamp.
  */
 export function deriveStage(quote: CraigQuote): LifecycleStage {
     if (quote.status === 'rejected') return 'rejected';
@@ -112,8 +122,9 @@ export function deriveStage(quote: CraigQuote): LifecycleStage {
 
     if (quote.status === 'approved') return 'approved';
 
-    // status === 'pending_approval' below
-    if (quote.notification_sent_at) return 'awaiting_approval';
+    // status === 'pending_approval' below — collapse 'new' into
+    // 'awaiting_approval'. See docstring above.
+    if (quote.status === 'pending_approval') return 'awaiting_approval';
 
     return 'new';
 }
