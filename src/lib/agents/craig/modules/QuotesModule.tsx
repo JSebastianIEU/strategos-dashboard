@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
     CheckCircle2,
@@ -35,6 +35,7 @@ import { PdfDrawer } from '@/components/blocks/PdfDrawer';
 
 const STATUS_VARIANT: Record<QuoteStatus, 'warning' | 'success' | 'secondary' | 'destructive'> = {
     pending_approval: 'warning',
+    needs_revision: 'warning',
     approved: 'success',
     sent: 'success',
     accepted: 'success',
@@ -115,8 +116,14 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
     // template links to `?focus_quote=<id>`; when that param is set
     // and the quote is in our list, auto-open the sidebar + scroll
     // it into view. Only runs once per fresh mount + after quotes load.
+    //
+    // v34 — also reads `?action=manual_price` (passed from the
+    // manual-review notification). When present, the ManualPricingForm
+    // grabs focus on its inc-VAT input on mount via its own effect,
+    // and we scroll it into view here.
     const searchParams = useSearchParams();
     const focusQuoteParam = searchParams?.get('focus_quote') ?? null;
+    const actionParam = searchParams?.get('action') ?? null;
     useEffect(() => {
         if (!focusQuoteParam || !quotes || quotes.length === 0) return;
         const wantId = parseInt(focusQuoteParam, 10);
@@ -126,25 +133,35 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
             // Default the left-list filter to the focused quote's actual
             // stage. For most notification clicks that's
             // 'awaiting_approval' — the queue Justin came to action.
-            // If the quote already moved on (he was slow to click), the
-            // filter follows it so the row stays visible alongside the
-            // sidebar. Falls back to 'all' for stages without a chip.
+            // For v34 manual-review clicks the stage is 'needs_revision'.
+            // Either way the chip lights up and the row stays visible
+            // alongside the sidebar. Falls back to 'all' for stages
+            // without a chip.
             const targetStage = deriveStage(target);
             const validChip = STAGE_ORDER.includes(targetStage) || targetStage === 'rejected';
             setStageFilter(validChip ? targetStage : 'all');
             void openQuoteDetail(target);
-            // Scroll into view after the sidebar mounts
+            // Scroll into view after the sidebar mounts. If
+            // action=manual_price, scroll to the form specifically
+            // (form has its own focus handling via its useEffect).
             setTimeout(() => {
+                if (actionParam === 'manual_price') {
+                    const form = document.getElementById('manual-pricing-form');
+                    if (form) {
+                        form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        return;
+                    }
+                }
                 const el = document.querySelector<HTMLElement>(
                     `aside[data-quote-id="${wantId}"]`,
                 );
                 el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }, 200);
+            }, 250);
         }
         // Intentionally only run on the first quotes load OR when the
         // param changes; subsequent re-renders shouldn't re-open.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [focusQuoteParam, quotes]);
+    }, [focusQuoteParam, actionParam, quotes]);
 
     /** v33 — stage counts for the chip badges. Always reflects the
      *  full unfiltered set so the chips show the right totals
@@ -925,6 +942,19 @@ function QuoteDetailSidebar({ quote, conv, organizationSlug, agentApiBaseUrl, on
                 </div>
             )}
 
+            {/* v34 — Manual pricing form. Only renders when the quote
+                is at status='needs_revision' (Craig refused to auto-quote).
+                Justin types the inc-VAT total + an internal note, hits
+                Save → status flips to pending_approval and the v33
+                approval pipeline takes over. */}
+            {quote.status === 'needs_revision' && (
+                <ManualPricingForm
+                    quote={quote}
+                    organizationSlug={organizationSlug}
+                    apiFetch={apiFetch}
+                />
+            )}
+
             {/* Customer */}
             <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs space-y-1.5 mb-4">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Customer</div>
@@ -1126,6 +1156,214 @@ function FilterChip({ label, active, onClick }: { label: string; active: boolean
         >
             {label}
         </button>
+    );
+}
+
+
+// =============================================================================
+// v34 — ManualPricingForm
+// =============================================================================
+//
+// Renders inside QuoteDetailSidebar when quote.status === 'needs_revision'.
+// Justin types an inc-VAT price + an internal note, hits Save, and the
+// backend (PATCH /quotes/{id}/manual-price) flips the status to
+// pending_approval — at which point the v33 approval pipeline takes
+// over (Resend approval email → click Approve → Stripe link + Missive
+// auto-send to customer).
+// =============================================================================
+
+
+interface ManualPricingFormProps {
+    quote: CraigQuote;
+    organizationSlug: string;
+    apiFetch: AgentModuleProps['apiFetch'];
+}
+
+
+function ManualPricingForm({ quote, organizationSlug, apiFetch }: ManualPricingFormProps) {
+    // Pre-fill with prior values if the form was saved before (in case
+    // Justin re-opens a needs_revision quote that he started but didn't
+    // commit). Backend rounds to 2dp so we preserve that precision.
+    const initialIncVat =
+        quote.manual_quote_price_inc_vat != null
+            ? String(quote.manual_quote_price_inc_vat)
+            : '';
+    const initialNotes = quote.manual_quote_notes ?? '';
+
+    const [incVat, setIncVat] = useState<string>(initialIncVat);
+    const [notes, setNotes] = useState<string>(initialNotes);
+    const [saving, setSaving] = useState(false);
+
+    // v34 — auto-focus the inc-VAT input when the deep link
+    // ?action=manual_price is present. The QuotesModule effect that
+    // reads focus_quote also reads action — but we keep the focus
+    // logic local here so the form always grabs focus when it mounts
+    // for an action=manual_price navigation.
+    const inputRef = useRef<HTMLInputElement | null>(null);
+    const searchParams = useSearchParams();
+    const action = searchParams?.get('action') ?? null;
+    useEffect(() => {
+        if (action === 'manual_price' && inputRef.current) {
+            inputRef.current.focus();
+            inputRef.current.select();
+        }
+    }, [action]);
+
+    async function handleSave() {
+        const parsed = parseFloat(incVat);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            toast.error('Enter a positive inc-VAT price');
+            inputRef.current?.focus();
+            return;
+        }
+        setSaving(true);
+        try {
+            const body = {
+                price_inc_vat: parsed,
+                notes: notes.trim() || null,
+            };
+            // apiFetch deserializes JSON and throws on non-2xx (see
+            // AgentModuleProps in src/types/agent.ts). The 4xx case
+            // (e.g. wrong status, validation error) bubbles up as
+            // an Error with the body baked in.
+            await apiFetch<{ quote: CraigQuote; noop: boolean }>(
+                `/admin/api/orgs/${organizationSlug}/quotes/${quote.id}/manual-price`,
+                {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                },
+            );
+            toast.success(
+                `Saved €${parsed.toFixed(2)} on JP-${String(quote.id).padStart(4, '0')}. ` +
+                `Now in awaiting approval — refreshing the table.`,
+            );
+            // Triggering a soft reload via the URL — the table will
+            // re-fetch on next mount. We could also bubble up via a
+            // callback prop but a refresh is simpler + matches what
+            // other forms do here.
+            window.location.reload();
+        } catch (err) {
+            toast.error(`Failed to save manual price: ${(err as Error).message}`);
+            setSaving(false);
+        }
+    }
+
+    /** Render a copy-friendly snippet so Justin can paste the price + note
+     * into a Missive draft if he wants to write his own customer email
+     * (otherwise the v33 auto-send from Approve handles it). */
+    const emailSnippet = `Hi,
+
+Thanks for your enquiry. Your price for ${quote.product_key} is €${
+        Number.isFinite(parseFloat(incVat)) && parseFloat(incVat) > 0
+            ? parseFloat(incVat).toFixed(2)
+            : '—'
+    } inc VAT.
+
+${notes.trim() ? notes.trim() + '\n\n' : ''}Just confirm and I'll send the payment link.
+
+Thanks,
+Justin`;
+
+    function copySnippet() {
+        navigator.clipboard.writeText(emailSnippet).then(
+            () => toast.success('Email snippet copied to clipboard'),
+            () => toast.error('Could not access clipboard'),
+        );
+    }
+
+    return (
+        <div
+            id="manual-pricing-form"
+            className="mb-4 rounded-lg border border-orange-300 bg-orange-50 p-4 space-y-3"
+        >
+            <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-orange-700 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                    <div className="text-xs font-semibold text-orange-900 uppercase tracking-wider">
+                        Manual pricing required
+                    </div>
+                    <div className="text-xs text-orange-800 mt-0.5">
+                        {quote.manual_review_reason ??
+                            "Craig refused to auto-quote this product. Type the price below."}
+                    </div>
+                </div>
+            </div>
+
+            <div className="space-y-2">
+                <div>
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-700 block mb-1">
+                        Total price (inc VAT)
+                    </label>
+                    <Input
+                        ref={inputRef}
+                        type="number"
+                        inputMode="decimal"
+                        step="0.01"
+                        min="0"
+                        placeholder="e.g. 420.00"
+                        value={incVat}
+                        onChange={(e) => setIncVat(e.target.value)}
+                        className="bg-white"
+                        disabled={saving}
+                    />
+                    <div className="text-[10px] text-slate-500 mt-1">
+                        Ex-VAT auto-derives from the product&apos;s category VAT rate.
+                    </div>
+                </div>
+
+                <div>
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-700 block mb-1">
+                        Internal notes (operator-only)
+                    </label>
+                    <textarea
+                        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-sans focus:outline-none focus:ring-2 focus:ring-orange-300"
+                        rows={3}
+                        placeholder="e.g. Custom-cut vinyl 50x30mm, includes 23% VAT"
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        disabled={saving}
+                    />
+                </div>
+            </div>
+
+            <div className="flex gap-2 flex-wrap">
+                <Button
+                    onClick={handleSave}
+                    disabled={saving || !incVat.trim()}
+                    className="flex-1"
+                >
+                    {saving ? (
+                        <>
+                            <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                            Saving…
+                        </>
+                    ) : (
+                        <>Save manual price</>
+                    )}
+                </Button>
+                <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={copySnippet}
+                    disabled={!incVat.trim()}
+                >
+                    <Copy className="h-3.5 w-3.5 mr-1.5" />
+                    Copy email snippet
+                </Button>
+            </div>
+
+            <details className="text-[11px] text-slate-700">
+                <summary className="cursor-pointer text-slate-600 hover:text-slate-900">
+                    What happens after I save?
+                </summary>
+                <ol className="list-decimal pl-5 mt-2 space-y-1">
+                    <li>Quote flips from <code>needs_revision</code> to <code>pending_approval</code>.</li>
+                    <li>You get a fresh &ldquo;ready for approval&rdquo; email at info@just-print.ie.</li>
+                    <li>One Approve click sends the customer a payment link via Missive.</li>
+                </ol>
+            </details>
+        </div>
     );
 }
 

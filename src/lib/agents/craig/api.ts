@@ -8,7 +8,11 @@ export type QuoteStatus =
     | 'approved'
     | 'sent'
     | 'accepted'
-    | 'rejected';
+    | 'rejected'
+    // v34 — manual-review escalation. Engine refused to auto-quote
+    // (per-sq/m, POA, etc.); waiting for Justin to type a price via
+    // the manual-pricing form.
+    | 'needs_revision';
 
 export interface CraigQuote {
     id: number;
@@ -61,6 +65,22 @@ export interface CraigQuote {
     notification_message_id?: string | null;
     /** Captures Resend / settings errors. Surfaced as a warning chip in the sidebar. */
     notification_last_error?: string | null;
+    // v34 — manual-review escalation. Populated when the engine refused
+    // to auto-quote (per-sq/m, POA, etc.) and the LLM auto-created a
+    // needs_revision Quote. The dashboard's ManualPricingForm reads
+    // these fields and PATCHes /manual-price to fill them in.
+    /** Engine-supplied reason; surfaced in the sidebar banner + email. */
+    manual_review_reason?: string | null;
+    /** Justin's hand-typed inc-VAT total. Set when he saves a manual price. */
+    manual_quote_price_inc_vat?: number | null;
+    /** Justin's hand-typed ex-VAT total (auto-derived if absent on save). */
+    manual_quote_price_ex_vat?: number | null;
+    /** Operator-internal notes attached to the manual price. NOT surfaced to customer. */
+    manual_quote_notes?: string | null;
+    /** When Justin saved the manual price (drives the StageTracker timestamp). */
+    manually_priced_at?: string | null;
+    /** Operator who saved the manual price (claims.email). */
+    manually_priced_by?: string | null;
     // Phase F — shipping line item + customer-uploaded artwork (singular, deprecated)
     shipping_cost_ex_vat?: number;
     shipping_cost_inc_vat?: number;
@@ -187,6 +207,17 @@ export interface CraigProduct {
     bulk_price: number | null;
     bulk_threshold: number | null;
     min_qty: number | null;
+    /**
+     * v34 — manual-review escalation flag. When True, Craig refuses
+     * to auto-quote this product; it always escalates to needs_revision
+     * so Justin prices it manually. Pre-set on per-sq/m products
+     * (vinyl_labels, pvc_banners, etc.) and POA items.
+     */
+    manual_review_required?: boolean;
+    /** Short reason shown in the email subject + sidebar banner. */
+    manual_review_reason?: string | null;
+    /** Operator-only notes (NEVER shown to customer). Distinct from `notes`. */
+    internal_notes?: string | null;
     tiers: CraigPriceTier[];
 }
 
@@ -226,6 +257,13 @@ export interface CraigSurcharge {
     multiplier: number;
     kind: 'multiplier' | 'additive';
     applies_to_category: string | null;
+    /**
+     * v34 — per-product scoping. When non-empty, this surcharge
+     * applies ONLY to listed product keys (overrides
+     * applies_to_category at runtime). Null/empty = use category
+     * scope, or global if both are null.
+     */
+    applies_to_product_keys?: string[] | null;
     description: string | null;
 }
 
