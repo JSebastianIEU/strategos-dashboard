@@ -7,6 +7,7 @@ import { ProductsTab } from './catalog/ProductsTab';
 import { CategoriesTab } from './catalog/CategoriesTab';
 import { TaxRatesTab } from './catalog/TaxRatesTab';
 import { SurchargesTab } from './catalog/SurchargesTab';
+import { PricingVerificationTab } from './catalog/PricingVerificationTab';
 
 export function CatalogModule(props: AgentModuleProps) {
     const [tab, setTab] = useState('products');
@@ -22,6 +23,8 @@ export function CatalogModule(props: AgentModuleProps) {
                     <TabsTrigger value="categories">Categories</TabsTrigger>
                     <TabsTrigger value="tax">Tax rates</TabsTrigger>
                     <TabsTrigger value="surcharges">Surcharges</TabsTrigger>
+                    {/* v34 — pricing verification table with Excel export */}
+                    <TabsTrigger value="verification">Verify prices</TabsTrigger>
                 </TabsList>
                 <TabsContent value="products">
                     <ProductsTab {...props} />
@@ -34,6 +37,9 @@ export function CatalogModule(props: AgentModuleProps) {
                 </TabsContent>
                 <TabsContent value="surcharges">
                     <SurchargesTab {...props} />
+                </TabsContent>
+                <TabsContent value="verification">
+                    <PricingVerificationTab {...props} />
                 </TabsContent>
             </Tabs>
         </div>
