@@ -126,6 +126,84 @@ export async function updateClient(
     }
 }
 
+/**
+ * v36 — sync an agent connection's enabled_capabilities to match the
+ * agent's current capabilities array. Used to roll out new dashboard
+ * modules (e.g. Test Chat + Issues from v35) to existing clients
+ * without manual SQL.
+ *
+ * Idempotent. Returns the diff (added + removed) so the caller can
+ * surface a useful toast.
+ */
+export async function syncAgentCapabilities(
+    clientSlug: string,
+    agentSlug: string,
+): Promise<
+    | { ok: true; added: string[]; removed: string[]; total: number }
+    | { error: string }
+> {
+    try {
+        await assertStrategosAdmin();
+
+        if (isDemoMode()) {
+            // Demo store doesn't track per-agent capabilities; treat as no-op.
+            return { ok: true, added: [], removed: [], total: 0 };
+        }
+
+        const admin = createAdminClient();
+        const { data: org } = await admin
+            .from('organizations')
+            .select('id')
+            .eq('slug', clientSlug)
+            .maybeSingle();
+        if (!org) return { error: 'Client not found' };
+        const { data: agent } = await admin
+            .from('agents')
+            .select('id, capabilities')
+            .eq('slug', agentSlug)
+            .maybeSingle();
+        if (!agent) return { error: 'Agent not found' };
+
+        const { data: conn, error: connErr } = await admin
+            .from('agent_connections')
+            .select('enabled_capabilities')
+            .eq('organization_id', org.id)
+            .eq('agent_id', agent.id)
+            .maybeSingle();
+        if (connErr) return { error: connErr.message };
+        if (!conn) {
+            return { error: 'Agent is not enabled for this client. Enable it first.' };
+        }
+
+        const target: string[] = Array.isArray(agent.capabilities) ? agent.capabilities : [];
+        const current: string[] = Array.isArray(conn.enabled_capabilities)
+            ? conn.enabled_capabilities
+            : [];
+        const currentSet = new Set(current);
+        const targetSet = new Set(target);
+        const added = target.filter((c) => !currentSet.has(c));
+        const removed = current.filter((c) => !targetSet.has(c));
+
+        if (added.length === 0 && removed.length === 0) {
+            return { ok: true, added: [], removed: [], total: target.length };
+        }
+
+        const { error: updErr } = await admin
+            .from('agent_connections')
+            .update({ enabled_capabilities: target })
+            .eq('organization_id', org.id)
+            .eq('agent_id', agent.id);
+        if (updErr) return { error: updErr.message };
+
+        revalidatePath(`/c/${clientSlug}`);
+        revalidatePath(`/strategos/clients`);
+        revalidatePath(`/strategos/clients/${clientSlug}`);
+        return { ok: true, added, removed, total: target.length };
+    } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+    }
+}
+
 export async function toggleAgentForClient(
     clientSlug: string,
     agentSlug: string,

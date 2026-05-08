@@ -11,7 +11,8 @@ import { Switch } from '@/components/ui/switch';
 import { FormField } from '@/components/blocks/FormField';
 import { updateClientSchema, type UpdateClientValues } from '@/schemas/client';
 import type { Organization } from '@/types/organization';
-import { updateClient, toggleAgentForClient } from '../actions';
+import { updateClient, toggleAgentForClient, syncAgentCapabilities } from '../actions';
+import { RefreshCw } from 'lucide-react';
 
 interface Props {
     org: Organization;
@@ -70,6 +71,29 @@ export function ClientConfigForm({ org, craigEnabled, availableAgents }: Props) 
             setEnabled((prev) => ({ ...prev, [agentSlug]: !enable }));
         } else {
             toast.success(enable ? 'Agent enabled' : 'Agent disabled');
+            router.refresh();
+        }
+    }
+
+    /**
+     * v36 — sync the connection's enabled_capabilities array to match
+     * the agent's current capabilities list. Used after the agency
+     * adds new modules to an agent definition (Test Chat, Issues, etc)
+     * so existing clients see the new modules in their sidebar.
+     */
+    async function syncCaps(agentSlug: string) {
+        const res = await syncAgentCapabilities(org.slug, agentSlug);
+        if ('error' in res) {
+            toast.error(res.error);
+            return;
+        }
+        if (res.added.length === 0 && res.removed.length === 0) {
+            toast.success(`Already in sync (${res.total} capabilities)`);
+        } else {
+            const parts: string[] = [];
+            if (res.added.length) parts.push(`added ${res.added.join(', ')}`);
+            if (res.removed.length) parts.push(`removed ${res.removed.join(', ')}`);
+            toast.success(`Sidebar updated — ${parts.join(' · ')}`);
             router.refresh();
         }
     }
@@ -134,16 +158,30 @@ export function ClientConfigForm({ org, craigEnabled, availableAgents }: Props) 
                             key={a.slug}
                             className="flex items-center justify-between rounded-md border border-slate-200 p-3"
                         >
-                            <div>
+                            <div className="flex-1 min-w-0">
                                 <div className="text-sm font-medium text-slate-900">{a.name}</div>
                                 <div className="text-xs text-slate-500 mt-0.5">
                                     {enabled[a.slug] ? 'Enabled' : 'Disabled'} for this workspace
                                 </div>
                             </div>
-                            <Switch
-                                checked={!!enabled[a.slug]}
-                                onCheckedChange={(v) => toggleAgent(a.slug, v)}
-                            />
+                            <div className="flex items-center gap-2">
+                                {enabled[a.slug] && (
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => syncCaps(a.slug)}
+                                        title="Pull the latest module list from the agent definition into this client's sidebar."
+                                    >
+                                        <RefreshCw className="h-3 w-3 mr-1.5" />
+                                        Sync sidebar
+                                    </Button>
+                                )}
+                                <Switch
+                                    checked={!!enabled[a.slug]}
+                                    onCheckedChange={(v) => toggleAgent(a.slug, v)}
+                                />
+                            </div>
                         </div>
                     ))}
                 </CardContent>
