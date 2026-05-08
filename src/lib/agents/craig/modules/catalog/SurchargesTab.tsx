@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus, Trash2, Percent } from 'lucide-react';
 import { toast } from 'sonner';
 import type { AgentModuleProps } from '@/types/agent';
-import type { CraigCategory, CraigSurcharge } from '../../api';
+import type { CraigCategory, CraigProduct, CraigSurcharge } from '../../api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -34,18 +34,22 @@ import { surchargeSchema, type SurchargeValues } from '@/schemas/surcharge';
 export function SurchargesTab({ organizationSlug, apiFetch }: AgentModuleProps) {
     const [surcharges, setSurcharges] = useState<CraigSurcharge[] | null>(null);
     const [categories, setCategories] = useState<CraigCategory[]>([]);
+    // v34 — products list for the per-product multi-select scope.
+    const [products, setProducts] = useState<CraigProduct[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [createOpen, setCreateOpen] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState<CraigSurcharge | null>(null);
 
     async function refresh() {
         try {
-            const [{ surcharges: s }, { categories: cs }] = await Promise.all([
+            const [{ surcharges: s }, { categories: cs }, { products: ps }] = await Promise.all([
                 apiFetch<{ surcharges: CraigSurcharge[] }>(`/admin/api/orgs/${organizationSlug}/surcharges`),
                 apiFetch<{ categories: CraigCategory[] }>(`/admin/api/orgs/${organizationSlug}/categories`),
+                apiFetch<{ products: CraigProduct[] }>(`/admin/api/orgs/${organizationSlug}/products`),
             ]);
             setSurcharges(s);
             setCategories(cs);
+            setProducts(ps);
         } catch (e) {
             setError(String(e));
         }
@@ -127,12 +131,19 @@ export function SurchargesTab({ organizationSlug, apiFetch }: AgentModuleProps) 
                             <CardContent>
                                 <div className="flex flex-wrap gap-1.5">
                                     <Badge variant="secondary">{s.kind}</Badge>
-                                    {s.applies_to_category ? (
+                                    {s.applies_to_product_keys && s.applies_to_product_keys.length > 0 ? (
+                                        // v34 — per-product scope wins over category.
+                                        s.applies_to_product_keys.map((k) => (
+                                            <Badge key={k} variant="outline" className="bg-orange-50 border-orange-200">
+                                                {k.replace(/_/g, ' ')}
+                                            </Badge>
+                                        ))
+                                    ) : s.applies_to_category ? (
                                         <Badge variant="outline">
                                             {s.applies_to_category.replace(/_/g, ' ')}
                                         </Badge>
                                     ) : (
-                                        <Badge variant="outline">all categories</Badge>
+                                        <Badge variant="outline">all products</Badge>
                                     )}
                                 </div>
                             </CardContent>
@@ -147,6 +158,7 @@ export function SurchargesTab({ organizationSlug, apiFetch }: AgentModuleProps) 
                 organizationSlug={organizationSlug}
                 apiFetch={apiFetch}
                 categories={categories}
+                products={products}
                 onSuccess={refresh}
             />
             <ConfirmDialog
@@ -170,6 +182,7 @@ function CreateSurchargeDialog({
     organizationSlug,
     apiFetch,
     categories,
+    products,
     onSuccess,
 }: {
     open: boolean;
@@ -177,6 +190,7 @@ function CreateSurchargeDialog({
     organizationSlug: string;
     apiFetch: <T = unknown>(path: string, init?: RequestInit) => Promise<T>;
     categories: CraigCategory[];
+    products: CraigProduct[];
     onSuccess: () => Promise<void> | void;
 }) {
     const {
@@ -188,14 +202,24 @@ function CreateSurchargeDialog({
         formState: { errors, isSubmitting },
     } = useForm<SurchargeValues>({
         resolver: zodResolver(surchargeSchema),
-        defaultValues: { name: '', multiplier: 0, kind: 'multiplier' },
+        defaultValues: { name: '', multiplier: 0, kind: 'multiplier', applies_to_product_keys: [] },
     });
+
+    // v34 — track the selected product keys for the multi-select.
+    // When non-empty, applies_to_category is grayed out (per-product
+    // scope wins at runtime; sending both is also valid but confusing).
+    const selectedKeys: string[] = watch('applies_to_product_keys') ?? [];
+    const productScopeActive = selectedKeys.length > 0;
 
     async function onSubmit(values: SurchargeValues) {
         try {
-            const cleaned = {
+            const cleaned: Record<string, unknown> = {
                 ...values,
-                applies_to_category: values.applies_to_category || undefined,
+                applies_to_category: productScopeActive
+                    ? undefined
+                    : values.applies_to_category || undefined,
+                applies_to_product_keys:
+                    selectedKeys.length > 0 ? selectedKeys : undefined,
             };
             await apiFetch(`/admin/api/orgs/${organizationSlug}/surcharges`, {
                 method: 'POST',
@@ -209,6 +233,13 @@ function CreateSurchargeDialog({
         } catch (e) {
             toast.error('Failed: ' + e);
         }
+    }
+
+    function toggleKey(key: string) {
+        const next = selectedKeys.includes(key)
+            ? selectedKeys.filter((k) => k !== key)
+            : [...selectedKeys, key];
+        setValue('applies_to_product_keys', next, { shouldDirty: true });
     }
 
     return (
@@ -256,15 +287,65 @@ function CreateSurchargeDialog({
                             />
                         </FormField>
                     </div>
+                    {/* v34 — per-product scope (most specific wins). When
+                        any products are selected, the category scope below
+                        is grayed out. */}
+                    <FormField
+                        label="Applies to specific products (optional)"
+                        description="Pick one or more products to scope the surcharge precisely. Wins over category scope."
+                    >
+                        <div className="rounded-md border border-slate-200 bg-white p-2 max-h-44 overflow-y-auto space-y-1">
+                            {products.length === 0 ? (
+                                <div className="text-xs text-slate-500 py-1">No products yet.</div>
+                            ) : (
+                                products.map((p) => {
+                                    const checked = selectedKeys.includes(p.key);
+                                    return (
+                                        <label
+                                            key={p.key}
+                                            className="flex items-center gap-2 text-xs hover:bg-slate-50 rounded px-1.5 py-1 cursor-pointer"
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={checked}
+                                                onChange={() => toggleKey(p.key)}
+                                                className="h-3.5 w-3.5"
+                                            />
+                                            <span className="font-medium text-slate-900">{p.name}</span>
+                                            <span className="text-slate-500">·</span>
+                                            <span className="text-slate-500 capitalize">
+                                                {p.category.replace(/_/g, ' ')}
+                                            </span>
+                                            <span className="ml-auto text-[10px] text-slate-400 font-mono">
+                                                {p.key}
+                                            </span>
+                                        </label>
+                                    );
+                                })
+                            )}
+                        </div>
+                        {selectedKeys.length > 0 && (
+                            <div className="mt-1.5 text-[11px] text-orange-700">
+                                {selectedKeys.length} product{selectedKeys.length === 1 ? '' : 's'}
+                                {' '}selected · category scope ignored
+                            </div>
+                        )}
+                    </FormField>
+
                     <FormField
                         label="Applies to category"
-                        description="Leave blank to apply to all categories."
+                        description={
+                            productScopeActive
+                                ? 'Disabled — per-product scope is set above.'
+                                : 'Leave blank to apply to all categories.'
+                        }
                     >
                         <Select
                             value={watch('applies_to_category') ?? ''}
                             onValueChange={(v) =>
                                 setValue('applies_to_category', v === '__all__' ? undefined : v)
                             }
+                            disabled={productScopeActive}
                         >
                             <SelectTrigger>
                                 <SelectValue placeholder="All categories" />

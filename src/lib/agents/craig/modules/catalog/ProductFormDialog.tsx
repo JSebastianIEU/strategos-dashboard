@@ -25,6 +25,7 @@ import { FormField } from '@/components/blocks/FormField';
 import {
     createProductSchema,
     PRICING_STRATEGIES,
+    PRICING_STRATEGY_HINTS,
     PRICING_STRATEGY_LABELS,
     type CreateProductValues,
 } from '@/schemas/product';
@@ -75,6 +76,10 @@ export function ProductFormDialog({
                   bulk_price: initial.bulk_price ?? undefined,
                   bulk_threshold: initial.bulk_threshold ?? undefined,
                   min_qty: initial.min_qty ?? 1,
+                  // v34
+                  manual_review_required: initial.manual_review_required ?? false,
+                  manual_review_reason: initial.manual_review_reason ?? '',
+                  internal_notes: initial.internal_notes ?? '',
               }
             : {
                   name: '',
@@ -82,6 +87,7 @@ export function ProductFormDialog({
                   pricing_strategy: 'tiered',
                   double_sided_surcharge: true,
                   min_qty: 1,
+                  manual_review_required: false,
               },
     });
 
@@ -141,7 +147,12 @@ export function ProductFormDialog({
                         </FormField>
                     </div>
 
-                    <FormField label="Pricing strategy" required error={errors.pricing_strategy?.message}>
+                    <FormField
+                        label="Pricing strategy"
+                        required
+                        error={errors.pricing_strategy?.message}
+                        description={PRICING_STRATEGY_HINTS[strategy]}
+                    >
                         <Select
                             value={strategy}
                             onValueChange={(v) =>
@@ -200,8 +211,18 @@ export function ProductFormDialog({
                         <Textarea rows={2} {...register('description')} />
                     </FormField>
 
-                    <FormField label="Notes (Craig will mention these)">
+                    <FormField
+                        label="Customer-facing note"
+                        description="Craig may quote this back to the customer (e.g. 'Available in matte or gloss')."
+                    >
                         <Textarea rows={2} {...register('notes')} />
+                    </FormField>
+
+                    <FormField
+                        label="Internal notes (operator-only)"
+                        description="NEVER shown to customers. For your reference — pricing rationale, supplier quirks, gotchas."
+                    >
+                        <Textarea rows={2} {...register('internal_notes')} />
                     </FormField>
 
                     <FormField
@@ -239,6 +260,44 @@ export function ProductFormDialog({
                             checked={watch('double_sided_surcharge')}
                             onCheckedChange={(v) => setValue('double_sided_surcharge', v)}
                         />
+                    </div>
+
+                    {/* v34 — manual-review escalation flag */}
+                    <div className="rounded-md border border-orange-200 bg-orange-50 p-3 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <div className="text-sm font-medium text-slate-900">
+                                    Manual review required
+                                </div>
+                                <div className="text-xs text-slate-600 mt-0.5">
+                                    When ON, Craig will <strong>refuse to auto-quote</strong> this
+                                    product. He&apos;ll create a <code>needs_revision</code> quote
+                                    and email you for manual pricing instead.
+                                </div>
+                                <div className="text-xs text-slate-500 mt-1">
+                                    Use this for per-sq/m products (vinyl, banners), POA items, or
+                                    anything where the catalog price isn&apos;t reliable for the
+                                    customer&apos;s actual request.
+                                </div>
+                            </div>
+                            <Switch
+                                checked={watch('manual_review_required') ?? false}
+                                onCheckedChange={(v) =>
+                                    setValue('manual_review_required', v, { shouldDirty: true })
+                                }
+                            />
+                        </div>
+                        {watch('manual_review_required') && (
+                            <FormField
+                                label="Reason (shown in the email subject + sidebar)"
+                                error={errors.manual_review_reason?.message}
+                            >
+                                <Input
+                                    {...register('manual_review_reason')}
+                                    placeholder="e.g. per-sq/m item — needs width/height to quote"
+                                />
+                            </FormField>
+                        )}
                     </div>
 
                     <DialogFooter className="gap-2">
