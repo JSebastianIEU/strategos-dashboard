@@ -80,6 +80,11 @@ export function ProductFormDialog({
                   manual_review_required: initial.manual_review_required ?? false,
                   manual_review_reason: initial.manual_review_reason ?? '',
                   internal_notes: initial.internal_notes ?? '',
+                  // v36
+                  yield_per_sqm: initial.yield_per_sqm ?? undefined,
+                  default_unit_size_mm: initial.default_unit_size_mm ?? '',
+                  sheet_size_mm: initial.sheet_size_mm ?? '',
+                  sheet_price: initial.sheet_price ?? undefined,
               }
             : {
                   name: '',
@@ -195,6 +200,109 @@ export function ProductFormDialog({
                                     </FormField>
                                 </>
                             )}
+                        </div>
+                    )}
+
+                    {/* v36 — per-sq/m fields. Customer specifies size; engine
+                        computes total m² and bills at unit_price (€/m²). The
+                        yield_per_sqm + default_unit_size_mm fields are
+                        fallbacks for when the customer doesn't give a size. */}
+                    {strategy === 'per_sqm' && (
+                        <div className="space-y-3 rounded-md border border-blue-200 bg-blue-50/50 p-3">
+                            <div className="text-[11px] font-semibold uppercase tracking-wider text-blue-900">
+                                Per-square-meter config
+                            </div>
+                            <FormField
+                                label="Price per m² (€)"
+                                description="Engine multiplies total m² by this rate."
+                            >
+                                <Input
+                                    type="number"
+                                    step="0.01"
+                                    {...register('unit_price', { valueAsNumber: true })}
+                                    placeholder="45.00"
+                                />
+                            </FormField>
+                            <div className="grid grid-cols-2 gap-3">
+                                <FormField
+                                    label="Bulk price per m² (€)"
+                                    description="Optional. Used when total m² ≥ bulk threshold."
+                                >
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        {...register('bulk_price', { valueAsNumber: true })}
+                                        placeholder="40.00"
+                                    />
+                                </FormField>
+                                <FormField label="Bulk threshold (m²)">
+                                    <Input
+                                        type="number"
+                                        {...register('bulk_threshold', { valueAsNumber: true })}
+                                        placeholder="10"
+                                    />
+                                </FormField>
+                            </div>
+                            <FormField
+                                label="Yield per m² (items cut from a sheet)"
+                                description="Items produced from one m² (e.g. 81 vinyl labels per m²). Leave blank for area-only products like banners — the customer's width × height drives the price directly."
+                            >
+                                <Input
+                                    type="number"
+                                    step="1"
+                                    {...register('yield_per_sqm', { valueAsNumber: true })}
+                                    placeholder="81"
+                                />
+                            </FormField>
+                            <FormField
+                                label="Default item size (mm, optional)"
+                                description="Used when customer doesn't say a size, format 'WxH' (e.g. '50x30')."
+                            >
+                                <Input
+                                    {...register('default_unit_size_mm')}
+                                    placeholder="50x30"
+                                />
+                            </FormField>
+                        </div>
+                    )}
+
+                    {/* v36 — per-sheet fields. Engine packs panels onto the
+                        configured sheet, computes sheets_needed = ceil(qty /
+                        units_per_sheet), bills sheets_needed × sheet_price. */}
+                    {strategy === 'per_sheet' && (
+                        <div className="space-y-3 rounded-md border border-violet-200 bg-violet-50/50 p-3">
+                            <div className="text-[11px] font-semibold uppercase tracking-wider text-violet-900">
+                                Per-sheet config (foamex / dibond / corri)
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <FormField
+                                    label="Sheet size (mm)"
+                                    description="Format 'WxH' — e.g. '2400x1200' for 8×4 ft."
+                                >
+                                    <Input
+                                        {...register('sheet_size_mm')}
+                                        placeholder="2400x1200"
+                                    />
+                                </FormField>
+                                <FormField
+                                    label="Sheet price (€)"
+                                    description="Cost of one full sheet."
+                                >
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        {...register('sheet_price', { valueAsNumber: true })}
+                                        placeholder="150.00"
+                                    />
+                                </FormField>
+                            </div>
+                            <p className="text-[11px] text-violet-800 leading-relaxed">
+                                Customer specifies panel size in mm; engine computes how many
+                                panels fit per sheet (axis-aligned, with rotation), rounds up to
+                                the nearest sheet, and bills <code>sheets_needed × sheet_price</code>.
+                                Leave sheet_price blank to have Craig escalate to manual review
+                                until you set it.
+                            </p>
                         </div>
                     )}
 

@@ -218,6 +218,18 @@ export interface CraigProduct {
     manual_review_reason?: string | null;
     /** Operator-only notes (NEVER shown to customer). Distinct from `notes`. */
     internal_notes?: string | null;
+    /**
+     * v36 — per-sq/m config. `yield_per_sqm` is the count of items
+     * cut per m² (e.g. 81 for vinyl labels). When the customer
+     * doesn't specify a size, the engine uses this fallback.
+     */
+    yield_per_sqm?: number | null;
+    /** v36 — default per-item size for per-sqm products, format "WxH" mm. */
+    default_unit_size_mm?: string | null;
+    /** v36 — sheet dimensions for per-sheet panels, format "WxH" mm (e.g. "2400x1200"). */
+    sheet_size_mm?: string | null;
+    /** v36 — sheet price for per-sheet panels (€). */
+    sheet_price?: number | null;
     tiers: CraigPriceTier[];
 }
 

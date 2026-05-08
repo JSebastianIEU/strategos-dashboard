@@ -14,6 +14,7 @@ import {
     Loader2,
     CreditCard,
     Ban,
+    Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -72,6 +73,14 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
     const [pdfQuote, setPdfQuote] = useState<CraigQuote | null>(null);
     /** Phase G — quote selected for the right-side detail panel (row click). */
     const [selectedQuote, setSelectedQuote] = useState<CraigQuote | null>(null);
+    /** v36 — rows the operator has multi-selected via the table checkbox column.
+     *  Drives the bulk-actions toolbar that appears when length > 0. */
+    const [selectedRows, setSelectedRows] = useState<CraigQuote[]>([]);
+    /** v36 — confirm dialog state for delete (single row OR bulk).
+     *  Shows side-effects (Stripe link active, PrintLogic order, etc)
+     *  before firing the delete. */
+    const [pendingDelete, setPendingDelete] = useState<CraigQuote[] | null>(null);
+    const [bulkBusy, setBulkBusy] = useState(false);
     /** Conversation hydrated for the selected quote (lazy fetch on row click). */
     const [selectedConv, setSelectedConv] = useState<{
         customer_name?: string | null;
@@ -249,6 +258,71 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
             }
         } catch (e) {
             toast.error('Failed to update: ' + e);
+        }
+    }
+
+    /**
+     * v36 — bulk action handler. Iterates server-side via /quotes/bulk
+     * endpoint; per-row failures are surfaced individually. delete and
+     * approve carry side effects (X-Confirm-Delete header, Stripe +
+     * Missive auto-fire), so the underlying endpoint mirrors the
+     * single-row paths.
+     */
+    async function bulkAction(
+        action: 'approve' | 'reject' | 'delete',
+        ids: number[],
+    ) {
+        if (ids.length === 0) return;
+        setBulkBusy(true);
+        try {
+            const headers: Record<string, string> = {
+                'Content-Type': 'application/json',
+            };
+            if (action === 'delete') {
+                headers['X-Confirm-Delete'] = 'yes';
+            }
+            const res = await apiFetch<{
+                ok: number[];
+                failed: Array<{ id: number; error: string }>;
+            }>(
+                `/admin/api/orgs/${organizationSlug}/quotes/bulk`,
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ action, ids }),
+                },
+            );
+
+            // Refresh local state
+            if (action === 'delete') {
+                setQuotes((q) => q?.filter((row) => !res.ok.includes(row.id)) ?? null);
+                if (selectedQuote && res.ok.includes(selectedQuote.id)) {
+                    setSelectedQuote(null);
+                    setSelectedConv(null);
+                }
+            } else {
+                // approve/reject — refetch to pick up the new server state
+                // (simpler than reconstructing the integration response).
+                window.location.reload();
+                return;
+            }
+
+            const okN = res.ok.length;
+            const failN = res.failed.length;
+            if (okN && !failN) {
+                toast.success(`${okN} quote(s) ${action}d`);
+            } else if (okN && failN) {
+                toast.warning(`${okN} ok, ${failN} failed: ${res.failed.slice(0, 2).map(f => `#${f.id}: ${f.error}`).join('; ')}`);
+            } else if (failN) {
+                toast.error(`All ${failN} failed: ${res.failed[0]?.error ?? 'unknown'}`);
+            }
+
+            setSelectedRows([]);
+            setPendingDelete(null);
+        } catch (e) {
+            toast.error('Bulk action failed: ' + e);
+        } finally {
+            setBulkBusy(false);
         }
     }
 
@@ -749,6 +823,21 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
                             </Button>
                         </>
                     )}
+                    {/* v36 — per-row Delete (red destructive). Opens
+                        the same confirm dialog as bulk delete, scoped
+                        to the single row. */}
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        title="Delete this quote"
+                        className="text-rose-600 hover:bg-rose-50 hover:text-rose-700 border-rose-200"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setPendingDelete([row.original]);
+                        }}
+                    >
+                        <Trash2 className="h-3 w-3" />
+                    </Button>
                 </div>
             ),
         },
@@ -812,6 +901,41 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
 
             {error && <ErrorState description={error} className="mb-4" />}
 
+            {/* v36 — bulk-actions toolbar. Sticky at top of the data
+                area when at least one row is selected. */}
+            {selectedRows.length > 0 && (
+                <div className="sticky top-2 z-10 mb-3 flex items-center gap-3 rounded-lg border border-slate-300 bg-white px-4 py-2 shadow-sm">
+                    <div className="text-sm font-medium text-slate-900">
+                        {selectedRows.length} selected
+                    </div>
+                    <div className="flex-1" />
+                    <Button
+                        size="sm"
+                        onClick={() => bulkAction('approve', selectedRows.map((r) => r.id))}
+                        disabled={bulkBusy || selectedRows.every((r) => r.status !== 'pending_approval')}
+                    >
+                        <CheckCircle2 className="h-3 w-3 mr-1.5" /> Approve
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => bulkAction('reject', selectedRows.map((r) => r.id))}
+                        disabled={bulkBusy}
+                    >
+                        <XCircle className="h-3 w-3 mr-1.5" /> Reject
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-rose-600 hover:bg-rose-50 hover:text-rose-700 border-rose-200"
+                        onClick={() => setPendingDelete(selectedRows)}
+                        disabled={bulkBusy}
+                    >
+                        <Trash2 className="h-3 w-3 mr-1.5" /> Delete
+                    </Button>
+                </div>
+            )}
+
             <div className={selectedQuote ? "grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_440px] gap-6" : ""}>
                 <div>
                     {quotes === null ? (
@@ -823,6 +947,9 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
                             emptyTitle="No quotes match"
                             emptyDescription="Adjust your filters or wait for Craig to produce a new quote."
                             onRowClick={openQuoteDetail}
+                            enableRowSelection
+                            getRowId={(row) => String(row.id)}
+                            onSelectedRowsChange={setSelectedRows}
                         />
                     )}
                 </div>
@@ -845,6 +972,120 @@ export function QuotesModule({ organizationSlug, agentApiBaseUrl, apiFetch }: Ag
                 title={pdfQuote ? `Quote JP-${String(pdfQuote.id).padStart(4, '0')}` : ''}
                 url={pdfQuote ? `${agentApiBaseUrl}/quotes/${pdfQuote.id}/pdf` : ''}
             />
+
+            {/* v36 — Delete confirm dialog (single row OR bulk). Surfaces
+                live side-effects (Stripe link active, PrintLogic order
+                pushed, etc) so the operator can cancel those upstream
+                first if they want a refund / production halt. */}
+            {pendingDelete && (
+                <DeleteConfirmDialog
+                    quotes={pendingDelete}
+                    onCancel={() => setPendingDelete(null)}
+                    onConfirm={() => bulkAction('delete', pendingDelete.map((q) => q.id))}
+                    busy={bulkBusy}
+                />
+            )}
+        </div>
+    );
+}
+
+
+/**
+ * v36 — confirmation dialog for delete (single or bulk). Listed here
+ * rather than in a separate file so the side-effect summary stays
+ * close to the CraigQuote shape it inspects.
+ */
+function DeleteConfirmDialog({
+    quotes,
+    onCancel,
+    onConfirm,
+    busy,
+}: {
+    quotes: CraigQuote[];
+    onCancel: () => void;
+    onConfirm: () => void;
+    busy: boolean;
+}) {
+    const warnings: Array<{ id: number; ref: string; messages: string[] }> = quotes.map((q) => {
+        const ref = `JP-${String(q.id).padStart(4, '0')}`;
+        const msgs: string[] = [];
+        if ((q.stripe_payment_link_url ?? '').trim()) {
+            const status = q.stripe_payment_status ?? 'unpaid';
+            msgs.push(
+                status === 'paid'
+                    ? `Has a PAID Stripe link — refund through Stripe before deleting if you want the customer's money back.`
+                    : `Stripe payment link is still active. The customer can still pay it. Cancel via the payment-link card first if you don't want them to.`,
+            );
+        }
+        if ((q.printlogic_order_id ?? '').trim()) {
+            const isDryRun = q.printlogic_order_id?.startsWith('DRY-');
+            msgs.push(
+                isDryRun
+                    ? `Has a DRY-run PrintLogic id (no production impact).`
+                    : `PrintLogic order ${q.printlogic_order_id} is live — cancel via PrintLogic dashboard before delete to halt production.`,
+            );
+        }
+        if ((q.missive_draft_id ?? '').trim()) {
+            msgs.push(`Email draft already in Missive thread.`);
+        }
+        return { id: q.id, ref, messages: msgs };
+    });
+
+    const hasWarnings = warnings.some((w) => w.messages.length > 0);
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+            onClick={onCancel}
+        >
+            <div
+                className="max-w-lg w-full rounded-xl bg-white shadow-xl"
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="px-5 py-4 border-b border-slate-200">
+                    <h3 className="text-base font-semibold text-slate-900">
+                        Delete {quotes.length} quote{quotes.length === 1 ? '' : 's'}?
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                        This permanently removes the row(s) from the database. It cannot be undone.
+                    </p>
+                </div>
+                <div className="px-5 py-4 space-y-2 max-h-72 overflow-y-auto">
+                    {warnings.map((w) => (
+                        <div key={w.id} className="text-xs">
+                            <div className="font-mono font-semibold text-slate-900">{w.ref}</div>
+                            {w.messages.length > 0 ? (
+                                <ul className="mt-1 ml-4 list-disc text-amber-800">
+                                    {w.messages.map((m, i) => (
+                                        <li key={i}>{m}</li>
+                                    ))}
+                                </ul>
+                            ) : (
+                                <div className="text-slate-500 ml-2">no live integrations</div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+                {hasWarnings && (
+                    <div className="px-5 py-2 bg-amber-50 border-t border-amber-200 text-[11px] text-amber-800">
+                        ⚠️ Deleting won't auto-cancel live Stripe / PrintLogic side-effects.
+                        Cancel those first if needed.
+                    </div>
+                )}
+                <div className="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
+                    <Button variant="outline" onClick={onCancel} disabled={busy}>
+                        Cancel
+                    </Button>
+                    <Button
+                        onClick={onConfirm}
+                        disabled={busy}
+                        className="bg-rose-600 hover:bg-rose-700 text-white"
+                    >
+                        {busy ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : <Trash2 className="h-3 w-3 mr-1.5" />}
+                        Delete {quotes.length} quote{quotes.length === 1 ? '' : 's'}
+                    </Button>
+                </div>
+            </div>
         </div>
     );
 }

@@ -10,28 +10,37 @@ export const PRICING_STRATEGIES = [
     'per_unit_metric',
     'bulk_break',
     'per_job',
+    // v36 — dimension-aware strategies for per-sq/m + per-sheet products
+    'per_sqm',
+    'per_sheet',
 ] as const;
 export type PricingStrategy = (typeof PRICING_STRATEGIES)[number];
 
 export const PRICING_STRATEGY_LABELS: Record<PricingStrategy, string> = {
     tiered: 'Per-quantity price tiers (look up by qty)',
     per_unit: 'Per-unit (price × quantity)',
-    per_unit_metric: 'Per square-meter / kilo / hour (asks for dimensions)',
+    per_unit_metric: 'Per square-meter (legacy — use per_sqm)',
     bulk_break: 'Volume discount above threshold',
     per_job: 'Single fixed price per job',
+    per_sqm: 'Per square-meter (asks for dimensions)',
+    per_sheet: 'Per sheet (foamex / dibond / corri panels)',
 };
 
 /**
  * v34 — short hint shown next to each strategy option in the
  * ProductFormDialog. Helps non-technical operators understand
  * which one they want.
+ *
+ * v36 — added hints for per_sqm + per_sheet strategies.
  */
 export const PRICING_STRATEGY_HINTS: Record<PricingStrategy, string> = {
     tiered: 'Used for: business cards, flyers, postcards, pads. Each quantity (e.g. 100, 250, 500) has its own price set in the tiers table.',
-    per_unit: 'Used for: roller banners, foamex boards, dibond. Price = unit price × quantity. Bulk threshold optional.',
-    per_unit_metric: 'Used for: vinyl, banners, fabric where size matters. Engine multiplies the metric unit (e.g. m²) by the quantity. Currently flagged manual_review.',
+    per_unit: 'Used for: roller banners (priced per unit). Price = unit price × quantity.',
+    per_unit_metric: 'LEGACY — use per_sqm instead for any new per-square-meter product. Same engine path.',
     bulk_break: 'Used when: there are TWO prices — one for low qty, one for bulk above a threshold (e.g. unit_price=€35, bulk_price=€28, bulk_threshold=10).',
     per_job: 'Used for: booklets — a single fixed price for a complete spec (format + binding + pages + cover). Tiers carry the actual prices keyed by spec_key.',
+    per_sqm: 'Used for: vinyl labels, banners, graphics, fabric displays. Set unit_price in €/m². For items cut from a sheet (vinyl labels), set yield_per_sqm. Customer must give per-item width × height in mm.',
+    per_sheet: 'Used for: foamex / dibond / corri panels. Set sheet_size_mm (e.g. "2400x1200" for 8×4 ft) and sheet_price (€/sheet). Engine packs panels onto sheets and bills sheets_needed × sheet_price.',
 };
 
 const slug = z
@@ -69,6 +78,11 @@ export const createProductSchema = z.object({
     manual_review_reason: z.string().max(500).optional(),
     // Operator-only notes — never shown to customer (distinct from `notes`).
     internal_notes: z.string().max(2000).optional(),
+    // v36 — per-sq/m + per-sheet config
+    yield_per_sqm: z.number().nonnegative().optional(),
+    default_unit_size_mm: z.string().max(20).optional(),
+    sheet_size_mm: z.string().max(20).optional(),
+    sheet_price: z.number().nonnegative().optional(),
 });
 export type CreateProductValues = z.infer<typeof createProductSchema>;
 

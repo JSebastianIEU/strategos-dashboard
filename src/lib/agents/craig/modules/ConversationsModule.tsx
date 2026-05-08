@@ -68,6 +68,61 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState<EditDraft | null>(null);
     const [savingEdit, setSavingEdit] = useState(false);
+    /** v36 — multi-selected rows for bulk delete. */
+    const [selectedRows, setSelectedRows] = useState<CraigConversation[]>([]);
+    const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+    const [bulkBusy, setBulkBusy] = useState(false);
+
+    /**
+     * v36 — bulk-delete the selected conversations + their cascading
+     * quotes via POST /conversations/bulk on the backend. Refuses
+     * without X-Confirm-Delete header.
+     */
+    async function bulkDelete() {
+        const ids = selectedRows.map((r) => r.id);
+        if (ids.length === 0) return;
+        setBulkBusy(true);
+        try {
+            const res = await apiFetch<{
+                ok: number[];
+                failed: Array<{ id: number; error: string }>;
+                quotes_deleted: number;
+            }>(
+                `/admin/api/orgs/${organizationSlug}/conversations/bulk`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Confirm-Delete': 'yes',
+                    },
+                    body: JSON.stringify({ action: 'delete', ids }),
+                },
+            );
+            setList((prev) => prev?.filter((c) => !res.ok.includes(c.id)) ?? null);
+            if (selected && res.ok.includes(selected.id)) {
+                setSelected(null);
+            }
+            const okN = res.ok.length;
+            const failN = res.failed.length;
+            const quotesN = res.quotes_deleted;
+            if (okN && !failN) {
+                toast.success(
+                    `Deleted ${okN} conversation${okN === 1 ? '' : 's'}` +
+                    (quotesN ? ` + ${quotesN} linked quote${quotesN === 1 ? '' : 's'}` : ''),
+                );
+            } else if (okN && failN) {
+                toast.warning(`${okN} ok, ${failN} failed`);
+            } else {
+                toast.error(`All ${failN} failed`);
+            }
+            setSelectedRows([]);
+            setConfirmBulkDelete(false);
+        } catch (e) {
+            toast.error('Bulk delete failed: ' + e);
+        } finally {
+            setBulkBusy(false);
+        }
+    }
 
     function startEdit() {
         if (selected) {
@@ -239,6 +294,26 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
                 </div>
 
                 {error && <ErrorState description={error} className="mb-4" />}
+
+                {/* v36 — bulk-actions toolbar */}
+                {selectedRows.length > 0 && (
+                    <div className="sticky top-2 z-10 mb-3 flex items-center gap-3 rounded-lg border border-slate-300 bg-white px-4 py-2 shadow-sm">
+                        <div className="text-sm font-medium text-slate-900">
+                            {selectedRows.length} selected
+                        </div>
+                        <div className="flex-1" />
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-rose-600 hover:bg-rose-50 hover:text-rose-700 border-rose-200"
+                            onClick={() => setConfirmBulkDelete(true)}
+                            disabled={bulkBusy}
+                        >
+                            <Trash2 className="h-3 w-3 mr-1.5" /> Delete {selectedRows.length}
+                        </Button>
+                    </div>
+                )}
+
                 {list === null ? (
                     <Skeleton className="h-64" />
                 ) : (
@@ -247,9 +322,70 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
                         data={list}
                         onRowClick={openConversation}
                         emptyTitle="No conversations match"
+                        enableRowSelection
+                        getRowId={(row) => String(row.id)}
+                        onSelectedRowsChange={setSelectedRows}
                     />
                 )}
             </div>
+
+            {/* v36 — bulk-delete confirm dialog */}
+            {confirmBulkDelete && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+                    onClick={() => !bulkBusy && setConfirmBulkDelete(false)}
+                >
+                    <div
+                        className="max-w-md w-full rounded-xl bg-white shadow-xl"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-5 py-4 border-b border-slate-200">
+                            <h3 className="text-base font-semibold text-slate-900">
+                                Delete {selectedRows.length} conversation{selectedRows.length === 1 ? '' : 's'}?
+                            </h3>
+                            <p className="text-xs text-slate-500 mt-1">
+                                This permanently removes the conversation rows AND all linked
+                                quotes (cascade delete). It cannot be undone.
+                            </p>
+                        </div>
+                        <div className="px-5 py-4 max-h-60 overflow-y-auto">
+                            <ul className="text-xs space-y-1">
+                                {selectedRows.slice(0, 12).map((c) => (
+                                    <li key={c.id}>
+                                        <span className="font-mono">#{c.id}</span>
+                                        {' · '}
+                                        {c.customer_name || '(anonymous)'}
+                                        {' · '}
+                                        <span className="text-slate-500">{c.channel}</span>
+                                    </li>
+                                ))}
+                                {selectedRows.length > 12 && (
+                                    <li className="text-slate-500">
+                                        …and {selectedRows.length - 12} more
+                                    </li>
+                                )}
+                            </ul>
+                        </div>
+                        <div className="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
+                            <Button
+                                variant="outline"
+                                onClick={() => setConfirmBulkDelete(false)}
+                                disabled={bulkBusy}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                onClick={bulkDelete}
+                                disabled={bulkBusy}
+                                className="bg-rose-600 hover:bg-rose-700 text-white"
+                            >
+                                <Trash2 className="h-3 w-3 mr-1.5" />
+                                Delete {selectedRows.length}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {selected && (
                 <aside className="rounded-xl border border-slate-200 bg-white p-5 h-fit sticky top-6">
