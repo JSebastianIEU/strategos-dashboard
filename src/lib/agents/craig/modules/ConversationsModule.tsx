@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import type { ColumnDef } from '@tanstack/react-table';
-import { FileText, Download, Trash2, Pencil, Check, X, Building2, RotateCw, Truck, Store } from 'lucide-react';
+import { FileText, Download, Trash2, Pencil, Check, X, Building2, RotateCw, Truck, Store, AlertTriangle, ShieldCheck, Ban } from 'lucide-react';
 import type { AgentModuleProps } from '@/types/agent';
 import type { CraigConversation, CraigConversationDetail, CraigDeliveryAddress } from '../api';
 import { TranscriptViewer } from '../components/TranscriptViewer';
@@ -72,6 +72,10 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
     const [selectedRows, setSelectedRows] = useState<CraigConversation[]>([]);
     const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
     const [bulkBusy, setBulkBusy] = useState(false);
+    /** v37 — engagement-approval action busy spinner. */
+    const [engagementBusy, setEngagementBusy] = useState(false);
+    /** v37 — confirm dialog before "Don't engage" so Justin can't fat-finger it. */
+    const [confirmReject, setConfirmReject] = useState(false);
 
     /**
      * v36 — bulk-delete the selected conversations + their cascading
@@ -202,6 +206,33 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
         };
     }, [organizationSlug, apiFetch, channel, search]);
 
+    /**
+     * v37 — deep-link reader. When Justin clicks "Approve" or
+     * "Don't engage" in the engagement-approval email, the URL lands
+     * here with `?pending_engagement={conv_id}` (and optionally
+     * `&action=reject` to pre-open the reject confirmation). Opens the
+     * matching row's sidebar so Justin lands directly on the actions.
+     */
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        if (list === null) return;
+        const params = new URLSearchParams(window.location.search);
+        const pendingId = Number(params.get('pending_engagement'));
+        if (!pendingId) return;
+        const row = list.find((c) => c.id === pendingId);
+        if (!row) return;
+        // Open the conversation; if the email was the "reject" link,
+        // pre-open the confirm dialog so Justin only has to click once.
+        openConversation(row).then(() => {
+            if (params.get('action') === 'reject') setConfirmReject(true);
+        });
+        // Strip the deep-link params so a refresh doesn't re-open it.
+        const cleanUrl = window.location.pathname + window.location.hash;
+        window.history.replaceState({}, '', cleanUrl);
+        // We only want this to run once per list-load.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [list]);
+
     async function openConversation(c: CraigConversation) {
         try {
             const { conversation } = await apiFetch<{ conversation: CraigConversationDetail }>(
@@ -210,6 +241,77 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
             setSelected(conversation);
         } catch (e) {
             toast.error('Failed to load conversation: ' + e);
+        }
+    }
+
+    /**
+     * v37 — Justin approves engagement on a paused inbound. POST to
+     * /approve-engagement, which replays the deferred Craig run + posts
+     * the Missive draft. On success refresh the row + close the dialog.
+     */
+    async function approveEngagement() {
+        if (!selected) return;
+        setEngagementBusy(true);
+        try {
+            const res = await apiFetch<{
+                ok: boolean;
+                drafted: boolean;
+                reply_len: number;
+                error: string | null;
+                conversation: { id: number; status: string; engagement_classification: unknown };
+            }>(
+                `/admin/api/orgs/${organizationSlug}/conversations/${selected.id}/approve-engagement`,
+                { method: 'POST' },
+            );
+            const status = res.conversation?.status ?? 'engagement_approved';
+            // Refresh the full conversation so messages + transcript update
+            const { conversation } = await apiFetch<{ conversation: CraigConversationDetail }>(
+                `/admin/api/orgs/${organizationSlug}/conversations/${selected.id}`,
+            );
+            setSelected(conversation);
+            setList((prev) =>
+                prev?.map((c) => (c.id === conversation.id ? { ...c, ...conversation } : c)) ?? null,
+            );
+            if (res.drafted) {
+                toast.success('Craig replied — draft posted to Missive');
+            } else if (res.error) {
+                toast.warning(`Approved but reply failed: ${res.error}`);
+            } else {
+                toast.success(`Engagement approved (status: ${status})`);
+            }
+        } catch (e) {
+            toast.error('Approve failed: ' + e);
+        } finally {
+            setEngagementBusy(false);
+        }
+    }
+
+    /**
+     * v37 — Justin rejects engagement. Conversation flips to
+     * `engagement_rejected` and the webhook silently drops all future
+     * inbound on the same Missive thread.
+     */
+    async function rejectEngagement() {
+        if (!selected) return;
+        setEngagementBusy(true);
+        try {
+            const { conversation } = await apiFetch<{
+                ok: boolean;
+                conversation: CraigConversation;
+            }>(
+                `/admin/api/orgs/${organizationSlug}/conversations/${selected.id}/reject-engagement`,
+                { method: 'POST' },
+            );
+            setSelected({ ...selected, ...conversation } as CraigConversationDetail);
+            setList((prev) =>
+                prev?.map((c) => (c.id === conversation.id ? { ...c, ...conversation } : c)) ?? null,
+            );
+            toast.success("Marked don't engage — Craig will stay silent on this thread");
+            setConfirmReject(false);
+        } catch (e) {
+            toast.error('Reject failed: ' + e);
+        } finally {
+            setEngagementBusy(false);
         }
     }
 
@@ -248,7 +350,33 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
         {
             header: 'Status',
             accessorKey: 'status',
-            cell: ({ row }) => <Badge variant="secondary">{row.original.status}</Badge>,
+            cell: ({ row }) => {
+                const s = row.original.status;
+                // v37 — distinct visual treatment for the engagement-gate
+                // states so Justin can scan the queue at a glance.
+                if (s === 'pending_engagement_approval') {
+                    return (
+                        <Badge className="bg-amber-100 text-amber-900 hover:bg-amber-200 gap-1">
+                            <AlertTriangle className="h-3 w-3" /> awaiting approval
+                        </Badge>
+                    );
+                }
+                if (s === 'engagement_rejected') {
+                    return (
+                        <Badge className="bg-slate-200 text-slate-700 hover:bg-slate-300 gap-1">
+                            <Ban className="h-3 w-3" /> rejected
+                        </Badge>
+                    );
+                }
+                if (s === 'engagement_approved') {
+                    return (
+                        <Badge className="bg-emerald-100 text-emerald-900 hover:bg-emerald-200 gap-1">
+                            <ShieldCheck className="h-3 w-3" /> approved
+                        </Badge>
+                    );
+                }
+                return <Badge variant="secondary">{s}</Badge>;
+            },
         },
         { header: 'Messages', accessorKey: 'message_count' },
         {
@@ -488,6 +616,105 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
                         </div>
                     )}
 
+                    {/* v37 — engagement-approval banner. Visible while the
+                        conversation is paused awaiting Justin's call AND
+                        immediately after he chooses (until refresh). */}
+                    {!editing && selected.status === 'pending_engagement_approval' && selected.engagement_classification && (
+                        <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs">
+                            <div className="flex items-center gap-1.5 mb-2">
+                                <AlertTriangle className="h-3.5 w-3.5 text-amber-700" />
+                                <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-900">
+                                    Should Craig respond to this email?
+                                </span>
+                            </div>
+                            <div className="text-slate-700 mb-2">
+                                Confidence{' '}
+                                <span className="font-semibold">
+                                    {Math.round(((selected.engagement_classification.confidence ?? 0) as number) * 100)}%
+                                </span>
+                                {' — below the auto-respond threshold. Craig wrote nothing to Missive yet.'}
+                            </div>
+                            {selected.engagement_classification.reason && (
+                                <div className="text-slate-600 mb-3 italic">
+                                    Reason: {selected.engagement_classification.reason}
+                                </div>
+                            )}
+                            <div className="rounded-md border border-amber-200 bg-white p-2.5 mb-3 space-y-1">
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500">From</div>
+                                <div className="text-slate-900 break-all">
+                                    {selected.engagement_classification.from || '(unknown)'}
+                                </div>
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500 mt-1.5">Subject</div>
+                                <div className="text-slate-900">
+                                    {selected.engagement_classification.subject || '(no subject)'}
+                                </div>
+                                {selected.engagement_classification.body_preview && (
+                                    <>
+                                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mt-1.5">Body</div>
+                                        <div className="text-slate-700 whitespace-pre-wrap max-h-40 overflow-y-auto">
+                                            {selected.engagement_classification.body_preview}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
+                            {/* v37.1 — pre-rendered Craig reply. Shown so Justin
+                                sees exactly what will ship if he approves. */}
+                            {selected.engagement_classification.proposed_reply && (
+                                <div className="rounded-md border border-emerald-300 bg-emerald-50 p-2.5 mb-3 space-y-1">
+                                    <div className="flex items-center justify-between">
+                                        <div className="text-[10px] uppercase tracking-wider text-emerald-900 font-semibold">
+                                            Craig&apos;s draft (not sent yet)
+                                        </div>
+                                        {selected.engagement_classification.proposed_quote_id && (
+                                            <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-900 bg-amber-100 px-2 py-0.5 rounded-full">
+                                                Quote JP-{String(selected.engagement_classification.proposed_quote_id).padStart(4, '0')} attached
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="text-slate-800 whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
+                                        {selected.engagement_classification.proposed_reply}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 italic">
+                                        Approve sends this reply as-is. Don&apos;t engage drops it.
+                                    </div>
+                                </div>
+                            )}
+                            <div className="flex gap-2">
+                                <Button
+                                    size="sm"
+                                    onClick={approveEngagement}
+                                    disabled={engagementBusy}
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white flex-1"
+                                >
+                                    <ShieldCheck className="h-3 w-3 mr-1.5" />
+                                    Approve & let Craig respond
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setConfirmReject(true)}
+                                    disabled={engagementBusy}
+                                    className="text-slate-700 border-slate-300"
+                                >
+                                    <Ban className="h-3 w-3 mr-1.5" />
+                                    Don't engage
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* v37 — already-rejected indicator (read-only) */}
+                    {!editing && selected.status === 'engagement_rejected' && (
+                        <div className="mb-4 rounded-md border border-slate-300 bg-slate-50 p-3 text-xs flex items-center gap-2">
+                            <Ban className="h-3.5 w-3.5 text-slate-600" />
+                            <div className="text-slate-700">
+                                Marked don&apos;t engage. Craig stays silent on all future
+                                inbound on this Missive thread.
+                            </div>
+                        </div>
+                    )}
+
                     {/* Customer profile (edit mode) */}
                     {editing && draft && (
                         <div className="mb-4 rounded-md border border-slate-200 bg-white p-3 text-xs space-y-2.5">
@@ -710,6 +937,47 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
                         maxHeightClass="max-h-[55vh]"
                     />
                 </aside>
+            )}
+
+            {/* v37 — reject confirmation dialog */}
+            {confirmReject && selected && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+                    onClick={() => !engagementBusy && setConfirmReject(false)}
+                >
+                    <div
+                        className="max-w-md w-full rounded-xl bg-white shadow-xl"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-5 py-4 border-b border-slate-200">
+                            <h3 className="text-base font-semibold text-slate-900">
+                                Don&apos;t engage with this thread?
+                            </h3>
+                            <p className="text-xs text-slate-500 mt-1">
+                                Craig will stay silent on this Missive thread forever.
+                                All future inbound on the same conversation will be
+                                silently dropped (no notification, no draft).
+                            </p>
+                        </div>
+                        <div className="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
+                            <Button
+                                variant="outline"
+                                onClick={() => setConfirmReject(false)}
+                                disabled={engagementBusy}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                onClick={rejectEngagement}
+                                disabled={engagementBusy}
+                                className="bg-slate-700 hover:bg-slate-800 text-white"
+                            >
+                                <Ban className="h-3 w-3 mr-1.5" />
+                                Don&apos;t engage
+                            </Button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

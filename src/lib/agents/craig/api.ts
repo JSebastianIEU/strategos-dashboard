@@ -169,6 +169,51 @@ export interface CraigConversation {
      */
     customer_has_own_artwork?: boolean | null;
     artwork_will_send_later?: boolean;
+    /**
+     * v37 — engagement-approval gate. When the Missive webhook's
+     * inbound classifier returned a confidence below the per-tenant
+     * threshold (default 0.85), the conversation is parked in
+     * `pending_engagement_approval` and Justin gets an email with
+     * Approve / Don't engage buttons. This blob holds the classifier
+     * verdict + audit fields for the dashboard sidebar.
+     *
+     * Status values introduced by v37:
+     *   - 'pending_engagement_approval'  awaiting Justin's call
+     *   - 'engagement_approved'          Justin approved; Craig replied
+     *   - 'engagement_rejected'          Justin said don't engage
+     */
+    engagement_classification?: CraigEngagementClassification | null;
+}
+
+export interface CraigEngagementClassification {
+    from?: string | null;
+    subject?: string | null;
+    body_preview?: string | null;
+    verdict?: boolean;
+    confidence?: number;
+    reason?: string | null;
+    classified_at?: string | null;
+    notification_sent_at?: string | null;
+    notification_message_id?: string | null;
+    notification_last_error?: string | null;
+    approved_at?: string | null;
+    approved_by?: string | null;
+    rejected_at?: string | null;
+    rejected_by?: string | null;
+    missive_message_id?: string | null;
+    missive_subject?: string | null;
+    /**
+     * v37.1 — pre-rendered Craig reply. The webhook ran Craig at
+     * Tier-2 time and parked the proposed reply here so Justin sees
+     * what Craig WOULD send before he approves. On Approve, the
+     * cached HTML/subject is shipped verbatim — no second LLM call.
+     */
+    proposed_reply?: string | null;
+    proposed_html?: string | null;
+    proposed_subject?: string | null;
+    proposed_quote_id?: number | null;
+    proposed_attachments_present?: boolean;
+    proposed_should_send?: boolean;
 }
 
 export interface CraigConversationDetail extends CraigConversation {
