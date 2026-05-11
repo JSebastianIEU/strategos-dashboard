@@ -72,6 +72,14 @@ export function MissiveTab({ organizationSlug, agentApiBaseUrl, apiFetch }: Agen
     const [copied, setCopied] = useState<'url' | 'secret' | null>(null);
     const [revealSecret, setRevealSecret] = useState(false);
     const [revealToken, setRevealToken] = useState(false);
+    /**
+     * v37.7 — confirmation dialog for the kill switch. Toggling Craig
+     * ON/OFF affects live production traffic, so a one-click flip is
+     * too easy to fat-finger. We open a confirm modal with the
+     * direction-specific copy and let the user explicitly OK it.
+     */
+    const [pendingToggle, setPendingToggle] = useState<boolean | null>(null);
+    const [toggleBusy, setToggleBusy] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -145,17 +153,41 @@ export function MissiveTab({ organizationSlug, agentApiBaseUrl, apiFetch }: Agen
         }
     }
 
-    async function toggleEnabled(next: boolean) {
+    /**
+     * v37.7 — first stage: open the confirm dialog. The actual PATCH
+     * happens in `confirmToggle` only after the user explicitly
+     * acknowledges.
+     */
+    function requestToggle(next: boolean) {
+        setPendingToggle(next);
+    }
+
+    async function confirmToggle() {
+        if (pendingToggle === null) return;
+        const next = pendingToggle;
         const value = next ? 'true' : 'false';
+        setToggleBusy(true);
+        // Optimistic update — Switch position changes immediately.
         setDrafts((d) => ({ ...d, missive_enabled: value }));
         try {
             await patch('missive_enabled', value);
-            toast.success(next ? 'Missive connection enabled' : 'Missive connection disabled');
+            toast.success(
+                next
+                    ? 'Craig is now ON — replying to Missive emails.'
+                    : 'Craig is now OFF — webhook silent, no replies, no Justin notifications.',
+            );
+            setPendingToggle(null);
         } catch (e) {
-            // revert on error
+            // Revert optimistic update on error.
             setDrafts((d) => ({ ...d, missive_enabled: next ? 'false' : 'true' }));
             toast.error('Failed: ' + e);
+        } finally {
+            setToggleBusy(false);
         }
+    }
+
+    function cancelToggle() {
+        setPendingToggle(null);
     }
 
     async function copyTo(kind: 'url' | 'secret', value: string) {
@@ -235,18 +267,22 @@ export function MissiveTab({ organizationSlug, agentApiBaseUrl, apiFetch }: Agen
                     <div className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 p-3">
                         <div>
                             <div className="text-sm font-semibold text-slate-900">
-                                Enable Missive connection
+                                {enabled ? 'Craig is ON — replying to Missive' : 'Craig is OFF'}
                             </div>
                             <div className="text-xs text-slate-500">
-                                {readyToEnable
-                                    ? 'Token, secret, and from-address are all set — ready to go.'
-                                    : 'Fill in the token, from-address, and secret below before enabling.'}
+                                {enabled
+                                    ? 'Tap to pause. Webhook keeps receiving — Craig just stops drafting + notifying.'
+                                    : readyToEnable
+                                        ? 'Token, secret, and from-address are all set — flip to turn Craig ON.'
+                                        : 'Fill in the token, from-address, and secret below before turning ON.'}
                             </div>
                         </div>
                         <Switch
                             checked={enabled}
-                            disabled={!readyToEnable}
-                            onCheckedChange={toggleEnabled}
+                            // v37.7 — OFF is always allowed (emergency stop). Turning ON
+                            // requires all 3 fields to be set; turning OFF doesn't.
+                            disabled={!enabled && !readyToEnable}
+                            onCheckedChange={requestToggle}
                         />
                     </div>
                 </CardContent>
@@ -482,6 +518,69 @@ export function MissiveTab({ organizationSlug, agentApiBaseUrl, apiFetch }: Agen
                     </div>
                 </CardContent>
             </Card>
+
+            {/* v37.7 — kill switch confirmation dialog. Prevents accidental
+                flips in production. */}
+            {pendingToggle !== null && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+                    onClick={() => !toggleBusy && cancelToggle()}
+                >
+                    <div
+                        className="max-w-md w-full rounded-xl bg-white shadow-xl"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-5 py-4 border-b border-slate-200">
+                            <h3 className="text-base font-semibold text-slate-900">
+                                {pendingToggle
+                                    ? 'Turn Craig ON?'
+                                    : 'Turn Craig OFF?'}
+                            </h3>
+                            <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                                {pendingToggle ? (
+                                    <>
+                                        Craig will start auto-replying to inbound emails on the
+                                        watched Missive inbox. Justin will receive approval
+                                        emails for low-confidence inbound. The website chat
+                                        widget is unaffected.
+                                    </>
+                                ) : (
+                                    <>
+                                        The webhook keeps receiving (Missive is unaware), but
+                                        Craig won&apos;t draft replies, won&apos;t send anything
+                                        to Justin, and won&apos;t generate quotes from email.{' '}
+                                        <strong>The website chat widget is unaffected.</strong>
+                                    </>
+                                )}
+                            </p>
+                        </div>
+                        <div className="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
+                            <Button
+                                variant="outline"
+                                onClick={cancelToggle}
+                                disabled={toggleBusy}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                onClick={confirmToggle}
+                                disabled={toggleBusy}
+                                className={
+                                    pendingToggle
+                                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                        : 'bg-rose-600 hover:bg-rose-700 text-white'
+                                }
+                            >
+                                {toggleBusy
+                                    ? 'Working…'
+                                    : pendingToggle
+                                        ? 'Yes, turn Craig ON'
+                                        : 'Yes, turn Craig OFF'}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
