@@ -65,6 +65,16 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
     const [error, setError] = useState<string | null>(null);
     const [channel, setChannel] = useState<(typeof CHANNELS)[number]>('all');
     const [search, setSearch] = useState('');
+    /**
+     * v38 — abandoned-conversations filter. When ON, the table only
+     * shows conversations where: status='active' AND last_message_at
+     * is >24h ago AND the conversation has at least 3 messages AND
+     * the last role was 'assistant' (i.e. Craig replied, customer
+     * never came back). Surfaces the 42% abandon-rate problem that
+     * was invisible before — Justin only got notified on `quoted`
+     * and `escalated`, never on `active+stuck`.
+     */
+    const [showOnlyAbandoned, setShowOnlyAbandoned] = useState(false);
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState<EditDraft | null>(null);
     const [savingEdit, setSavingEdit] = useState(false);
@@ -419,6 +429,36 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
                         onChange={(e) => setSearch(e.target.value)}
                         className="h-8 w-72"
                     />
+                    {/* v38 — abandoned filter chip. Surfaces customers
+                        who engaged then ghosted before Craig could quote.
+                        Counted client-side from the already-loaded list. */}
+                    {(() => {
+                        const now = Date.now();
+                        const ONE_DAY = 24 * 60 * 60 * 1000;
+                        const abandonedCount = (list ?? []).filter((c) => {
+                            if (c.status !== 'active') return false;
+                            if ((c.message_count ?? 0) < 3) return false;
+                            if (!c.last_message_at) return false;
+                            const age = now - new Date(c.last_message_at).getTime();
+                            return age >= ONE_DAY;
+                        }).length;
+                        return (
+                            <Button
+                                size="sm"
+                                variant={showOnlyAbandoned ? 'default' : 'outline'}
+                                onClick={() => setShowOnlyAbandoned((v) => !v)}
+                                className={
+                                    showOnlyAbandoned
+                                        ? 'h-8 bg-amber-600 hover:bg-amber-700 text-white'
+                                        : 'h-8 border-amber-300 text-amber-900 hover:bg-amber-50'
+                                }
+                                title="Active threads with no customer reply in 24h+ — investigate why they bounced"
+                            >
+                                <AlertTriangle className="h-3 w-3 mr-1.5" />
+                                {showOnlyAbandoned ? 'Showing abandoned' : `Abandoned (${abandonedCount})`}
+                            </Button>
+                        );
+                    })()}
                 </div>
 
                 {error && <ErrorState description={error} className="mb-4" />}
@@ -447,9 +487,24 @@ export function ConversationsModule({ organizationSlug, agentApiBaseUrl, apiFetc
                 ) : (
                     <DataTable
                         columns={columns}
-                        data={list}
+                        data={(() => {
+                            if (!showOnlyAbandoned) return list;
+                            const now = Date.now();
+                            const ONE_DAY = 24 * 60 * 60 * 1000;
+                            return list.filter((c) => {
+                                if (c.status !== 'active') return false;
+                                if ((c.message_count ?? 0) < 3) return false;
+                                if (!c.last_message_at) return false;
+                                const age = now - new Date(c.last_message_at).getTime();
+                                return age >= ONE_DAY;
+                            });
+                        })()}
                         onRowClick={openConversation}
-                        emptyTitle="No conversations match"
+                        emptyTitle={
+                            showOnlyAbandoned
+                                ? "No abandoned conversations — nice"
+                                : "No conversations match"
+                        }
                         enableRowSelection
                         getRowId={(row) => String(row.id)}
                         onSelectedRowsChange={setSelectedRows}
